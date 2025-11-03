@@ -58,6 +58,12 @@ struct cc_bs_frame_coolchic
     struct cc_bs_layer_quant_info ups_lqi;
     struct cc_bs_layer_quant_info syn_lqi;
 
+    // progressive extension
+    struct cc_bs_layer_quant_info armhigh_lqi;
+    struct cc_bs_layer_quant_info synhigh_lqi;
+    struct cc_bs_layer_quant_info upshigh_lqi;
+    struct cc_bs_layer_quant_info upsscal_lqi;
+
     int hls_sig_blksize;
 
     int n_latent_n_resolutions;
@@ -70,8 +76,16 @@ struct cc_bs_frame_coolchic
     std::vector<unsigned char> m_arm_biases_hevc;
     std::vector<unsigned char> m_ups_weights_hevc; // both lb and hb
     std::vector<unsigned char> m_ups_biases_hevc; // both lb and hb
+    std::vector<unsigned char> m_upshigh_weights_hevc; // both lb and hb
+    std::vector<unsigned char> m_upshigh_biases_hevc; // both lb and hb
     std::vector<unsigned char> m_syn_weights_hevc; // all branches
     std::vector<unsigned char> m_syn_biases_hevc; // all branches
+    std::vector<unsigned char> m_synhigh_weights_hevc; // all branches
+    std::vector<unsigned char> m_synhigh_biases_hevc; // all branches
+    std::vector<unsigned char> m_armhigh_weights_hevc; // progressive extension
+    std::vector<unsigned char> m_armhigh_biases_hevc; // progressive extension
+    std::vector<unsigned char> m_upsscal_weights_hevc; // progressive extension
+    std::vector<unsigned char> m_upsscal_biases_hevc; // progressive extension
     std::vector<std::vector<unsigned char>> m_latents_hevc;
 
 public:
@@ -106,7 +120,7 @@ public:
     cc_bs() { m_f = NULL; }
     ~cc_bs() { if (m_f != NULL) fclose(m_f); }
     bool open(std::string filename, int verbosity = 0);
-    struct cc_bs_frame *decode_frame(struct cc_bs_frame const *prev_coded_I_frame_symbols, struct cc_bs_frame const *prev_coded_frame_symbols, int verbosity = 0);
+    struct cc_bs_frame *decode_frame(struct cc_bs_frame const *prev_coded_I_frame_symbols, struct cc_bs_frame const *prev_coded_frame_symbols, int verbosity = 0, bool decode_lowres = true);
 private:
     bool read_gop_header(int verbosity = 0);
 

@@ -62,7 +62,7 @@ def decode_network(
         loaded_param[k] = torch.tensor(cur_param).reshape_as(v)  * cur_q_step
 
     # empty_module.load_state_dict(loaded_param)
-    if "arm" in bitstream_path.weight:
+    if "arm" in bitstream_path.weight.rsplit(".cool",1)[-1]:
         empty_module.set_param_from_float(loaded_param)
     else:
         empty_module.load_state_dict(loaded_param, strict = have_bias)

@@ -19,7 +19,6 @@ void SYN_NAME(int KS,
               P *kw7_40, P *kb40, P *kw40_3, P *kb3,
               int h_in, int w_in, int stride_in, int plane_stride_in, int N_IN, int N_HIDDEN, P *in, int N_OUT, P *out)
 {
-    //printf("%s(ks=%d N_IN=%d N_HIDDEN=%d N_OUT=%d\n", xstr(SYN_NAME), KS, N_IN, N_HIDDEN, N_OUT);
 
 #ifdef SYN_KS
     int const ks = SYN_KS;
@@ -27,6 +26,11 @@ void SYN_NAME(int KS,
     int const ks = KS;
 #endif
 #ifdef SYN_N_IN
+    if (SYN_N_IN != N_IN)
+    {
+        printf("%s: bad call: SYN_N_IN %d != N_IN %d\n", xstr(SYN_NAME), SYN_N_IN, N_IN);
+        exit(1);
+    }
     int const n_in = SYN_N_IN;
 #else
     int const n_in = N_IN;
@@ -53,9 +57,9 @@ void SYN_NAME(int KS,
         printf("%s: bad call: ks=%d must be 1\n", xstr(SYN_NAME), KS);
         exit(1);
     }
-    if (n_in != 7 && n_in != 8)
+    if (n_in != 7 && n_in != 8 && n_in != 6)
     {
-        printf("%s: bad call: n_in %d can only be 7 or 8\n", xstr(SYN_NAME), n_in);
+        printf("%s: bad call: n_in %d can only be 6, 7 or 8\n", xstr(SYN_NAME), n_in);
         exit(1);
     }
     if (n_hidden%8 != 0)
@@ -66,7 +70,7 @@ void SYN_NAME(int KS,
 
     // gather-indicies
     int32_t pixel_indicies[8] = { 0*plane_stride_in, 1*plane_stride_in, 2*plane_stride_in, 3*plane_stride_in,
-                                  4*plane_stride_in, 5*plane_stride_in, 6*plane_stride_in, n_in < 8 ? 0 : 7*plane_stride_in};
+                                  4*plane_stride_in, 5*plane_stride_in, n_in < 7 ? 0 :6*plane_stride_in, n_in < 8 ? 0 : 7*plane_stride_in};
     __m256i ind_intel_0 = _mm256_loadu_si256((__m256i *)&pixel_indicies[0*8]);
 
     const __m256i rotate_right = _mm256_setr_epi32(1, 2, 3, 4, 5, 6, 7, 0);
@@ -81,6 +85,7 @@ void SYN_NAME(int KS,
         //for (int hl = 0; hl < n_hidden_layers; hl++)
         {
             P *kw = kw7_40;
+            //kw += n_hidden;
 
             for (int h8 = 0; h8 < n_hidden/8; h8++)
             {

@@ -12,8 +12,10 @@ from dataclasses import dataclass, field
 from typing import Dict, Optional, Union
 
 import torch
+import torch.nn.functional as F
 from enc.io.format.yuv import DictTensorYUV
 from torch import Tensor
+from enc.utils.lanczos import lanczos_interpolation
 
 
 @dataclass(kw_only=True)
@@ -25,12 +27,14 @@ class LossFunctionOutput():
 
     # Any other data required to compute some logs, stored inside a dictionary
     mse: Optional[float] = None                         # Mean squared error                               [ / ]
+    lr_mse: Optional[float] = None                 # Mean squared error of the low resolution image    [ / ]
     rate_latent_bpp: Optional[Dict[str, float]] = None  # Rate associated to the latent of each cool-chic  [bpp]
     total_rate_nn_bpp: float = 0.                       # Total rate associated to the all NNs of all cool-chic [bpp]
 
     # ==================== Not set by the init function ===================== #
     # Everything here is derived from the above metrics
     psnr_db: Optional[float] = field(init=False, default=None)                  # PSNR                            [ dB]
+    psnr_lr_db: Optional[float] = field(init=False, default=None)          # PSNR of the low resolution image [ dB]
     total_rate_latent_bpp: Optional[float] = field(init=False, default=None)    # Overall rate of all the latents [bpp]
     total_rate_bpp: Optional[float] = field(init=False, default=None)           # Overall rate: latent & NNs      [bpp]
     # ==================== Not set by the init function ===================== #
@@ -38,6 +42,9 @@ class LossFunctionOutput():
     def __post_init__(self):
         if self.mse is not None:
             self.psnr_db = -10.0 * math.log10(self.mse + 1e-10)
+
+        if self.lr_mse is not None:
+            self.psnr_lr_db = -10.0 * math.log10(self.lr_mse + 1e-10)
 
         if self.rate_latent_bpp is not None:
             self.total_rate_latent_bpp = sum(self.rate_latent_bpp.values())
@@ -86,9 +93,14 @@ def _compute_mse(
 
 def loss_function(
     decoded_image: Union[Tensor, DictTensorYUV],
+    decoded_low_res_image: Union[Tensor, DictTensorYUV],
     rate_latent_bit: Dict[str, Tensor],
     target_image: Union[Tensor, DictTensorYUV],
+    target_image_lowres: Union[Tensor, DictTensorYUV],
     lmbda: float = 1e-3,
+    encode_low_res: bool = False,
+    low_res_weight: float = 0.1,
+    low_res_mode: str = "downsampled",
     total_rate_nn_bit: float = 0.,
     compute_logs: bool = False,
 ) -> LossFunctionOutput:
@@ -136,9 +148,22 @@ def loss_function(
             target_max = target_image.max()
 
             decoded_image = (decoded_image - target_min) / (target_max - target_min)
+            if decoded_low_res_image is not None:
+                decoded_low_res_image = (decoded_low_res_image - target_min) / (target_max - target_min)
             target_image = (target_image - target_min) / (target_max - target_min)
 
     mse = _compute_mse(decoded_image, target_image)
+    if decoded_low_res_image is not None:
+        if low_res_mode == "downsampled":
+            low_res_mse = _compute_mse(decoded_low_res_image, target_image_lowres)
+        elif low_res_mode == "upsampled":
+            decoded_low_res_image_upsampled = lanczos_interpolation(decoded_low_res_image, scale_factor=2)
+            H, W = target_image.size()[-2:]
+            low_res_mse = _compute_mse(decoded_low_res_image_upsampled[:,:,:H,:W], target_image)
+        else:
+            raise ValueError(f"Unknown low res mode: {low_res_mode} valid options are: downsampled, upsampled")
+    else:
+        low_res_mse = 0.
 
     if isinstance(decoded_image, Tensor):
         n_pixels = decoded_image.size()[-2] * decoded_image.size()[-1]
@@ -149,7 +174,10 @@ def loss_function(
     rate_bpp = total_rate_latent_bit + total_rate_nn_bit
     rate_bpp = rate_bpp / n_pixels
 
-    loss = mse + lmbda * rate_bpp
+    if encode_low_res:
+        loss = mse * (1 - low_res_weight) + lmbda * rate_bpp + low_res_weight * low_res_mse
+    else:
+        loss = mse + lmbda * rate_bpp
 
     # Construct the output module, only the loss is always returned
     rate_latent_bpp = None
@@ -164,6 +192,7 @@ def loss_function(
     output = LossFunctionOutput(
         loss=loss,
         mse=mse.detach().item() if compute_logs else None,
+        lr_mse=low_res_mse.detach().item() if compute_logs else None,
         total_rate_nn_bpp=total_rate_nn_bpp,
         rate_latent_bpp=rate_latent_bpp,
     )

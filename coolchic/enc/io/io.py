@@ -3,6 +3,11 @@ from enc.io.types import FRAME_DATA_TYPE, POSSIBLE_BITDEPTH
 from enc.io.format.ppm import read_ppm
 from enc.io.format.yuv import read_yuv
 from enc.io.format.png import read_png
+import torch
+import numpy as np
+from PIL import Image
+from torchvision.transforms.functional import to_tensor
+from einops import rearrange
 
 
 def load_frame_data_from_file(file_path: str, idx_display_order: int) -> FrameData:
@@ -36,4 +41,17 @@ def load_frame_data_from_file(file_path: str, idx_display_order: int) -> FrameDa
         frame_data_type: FRAME_DATA_TYPE = "rgb"
         data, bitdepth = read_ppm(file_path)
 
-    return FrameData(bitdepth, frame_data_type, data)
+    assert isinstance(data, torch.Tensor), (
+        "The data loaded from the file should be a tensor. "
+        f"Found {type(data)}"
+    )
+    h, w = data.shape[-2:]
+    h_low = h // 2
+    w_low = w // 2
+    img = Image.fromarray((data*255).squeeze(0).permute(1,2,0).numpy().astype(np.uint8))
+    img_low = img.resize((w_low, h_low), Image.LANCZOS)
+    data_downscaled = rearrange(to_tensor(img_low), "c h w -> 1 c h w")
+
+
+
+    return FrameData(bitdepth, frame_data_type, data, data_downscaled)

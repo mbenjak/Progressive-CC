@@ -17,6 +17,7 @@ class FrameData:
     bitdepth: POSSIBLE_BITDEPTH
     frame_data_type: FRAME_DATA_TYPE
     data: Any #: Union[Tensor, DictTensorYUV]
+    data_downscaled: Any
 
     # Filled up by the __post_init__() function
     # ==================== Not set by the init function ===================== #

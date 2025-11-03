@@ -51,6 +51,7 @@ if __name__ == "__main__":
         " "
         "Otherwise, specify an integer in [8, 16] to set the output bitdepth."
     )
+    parser.add_argument("--decode_lowres", action="store_true", help="Decode low-res reconstruction")
     args = parser.parse_args()
     # =========================== Parse arguments =========================== #
 
@@ -77,6 +78,7 @@ if __name__ == "__main__":
             args.output_bitdepth,
             args.output_chroma_format,
             args.verbosity,
+            args.decode_lowres,
         )
     else:
         cc_decode_cpu(
@@ -85,4 +87,5 @@ if __name__ == "__main__":
             args.output_bitdepth,
             args.output_chroma_format,
             args.verbosity,
+            args.decode_lowres,
         )

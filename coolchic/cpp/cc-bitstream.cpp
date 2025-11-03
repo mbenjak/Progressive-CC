@@ -123,6 +123,11 @@ void read_syn_layer(FILE *bs, struct cc_bs_syn_layer &layer)
 void read_q_step_index_nn(FILE *bs, struct cc_bs_layer_quant_info &lqi)
 {
     lqi.q_step_index_nn_weight = read_int_1(bs);
+    if (lqi.q_step_index_nn_weight == 255)
+    {
+        lqi.q_step_index_nn_bias = -1;
+        return; // This module is not transmitted
+    }
     lqi.q_step_index_nn_bias = read_int_1(bs);
     if (lqi.q_step_index_nn_bias == 255)
         lqi.q_step_index_nn_bias = -1;
@@ -130,6 +135,12 @@ void read_q_step_index_nn(FILE *bs, struct cc_bs_layer_quant_info &lqi)
 
 void read_scale_index_nn(FILE *bs, struct cc_bs_layer_quant_info &lqi)
 {
+    if (lqi.q_step_index_nn_weight == 255)
+    {
+        lqi.scale_index_nn_weight = -1;
+        lqi.scale_index_nn_bias = -1;
+        return; // This module is not transmitted
+    }
     lqi.scale_index_nn_weight = read_int_1(bs);
     if (lqi.q_step_index_nn_bias < 0)
         lqi.scale_index_nn_bias = -1;
@@ -139,6 +150,12 @@ void read_scale_index_nn(FILE *bs, struct cc_bs_layer_quant_info &lqi)
 
 void read_n_bytes_nn(FILE *bs, struct cc_bs_layer_quant_info &lqi)
 {
+    if (lqi.q_step_index_nn_weight == 255)
+    {
+        lqi.q_step_index_nn_bias = 0;
+        lqi.n_bytes_nn_bias = 0;
+        return; // This module is not transmitted
+    }
     lqi.n_bytes_nn_weight = read_utf_coded(bs);
     if (lqi.q_step_index_nn_bias < 0)
         lqi.n_bytes_nn_bias = -1;
@@ -255,16 +272,25 @@ static bool read_cc_lengths(struct cc_bs_frame_coolchic &cc, bool latents_zero, 
     if (!cc.latents_zero)
         read_q_step_index_nn(bs, cc.ups_lqi);
     read_q_step_index_nn(bs, cc.syn_lqi);
+    read_q_step_index_nn(bs, cc.armhigh_lqi);
+    read_q_step_index_nn(bs, cc.upshigh_lqi);
+    read_q_step_index_nn(bs, cc.synhigh_lqi);
 
     read_scale_index_nn(bs, cc.arm_lqi);
     if (!cc.latents_zero)
         read_scale_index_nn(bs, cc.ups_lqi);
     read_scale_index_nn(bs, cc.syn_lqi);
+    read_scale_index_nn(bs, cc.armhigh_lqi);
+    read_scale_index_nn(bs, cc.upshigh_lqi);
+    read_scale_index_nn(bs, cc.synhigh_lqi);
 
     read_n_bytes_nn(bs, cc.arm_lqi);
     if (!cc.latents_zero)
         read_n_bytes_nn(bs, cc.ups_lqi);
     read_n_bytes_nn(bs, cc.syn_lqi);
+    read_n_bytes_nn(bs, cc.armhigh_lqi);
+    read_n_bytes_nn(bs, cc.upshigh_lqi);
+    read_n_bytes_nn(bs, cc.synhigh_lqi);
 
     cc.n_bytes_per_latent.resize(cc.latent_n_2d_grid);
     for (int i = 0; i < cc.latent_n_2d_grid; i++)
@@ -294,9 +320,15 @@ void cc_bs_frame_coolchic::print()
     printf("    hls_sig_blksize: %d\n", hls_sig_blksize);
 
     print_lqi("arm", arm_lqi);
+    print_lqi("armhigh", armhigh_lqi);
     if (!latents_zero)
+    {
         print_lqi("ups", ups_lqi);
+        print_lqi("upshigh", upshigh_lqi);
+    }
     print_lqi("syn", syn_lqi);
+    print_lqi("synhigh", synhigh_lqi);
+    print_lqi("upsscale", upsscal_lqi);
 
     printf("    latent_n_resolutions: %d\n", n_latent_n_resolutions);
     printf("    latent_n_2d_grid: %d\n", latent_n_2d_grid);
@@ -386,9 +418,9 @@ static std::vector<unsigned char> get_coded(FILE *bs, int n_bytes)
 }
 
 // update the coolchic data with the cabac compressed weights, biases and latents.
-static bool read_cc_content(struct cc_bs_frame_coolchic &cc, FILE *f)
+static bool read_cc_content(struct cc_bs_frame_coolchic &cc, FILE *f, bool decode_lowres)
 {
-
+    // Read weights for low-res models
     cc.m_arm_weights_hevc = get_coded(f, cc.arm_lqi.n_bytes_nn_weight);
     cc.m_arm_biases_hevc = get_coded(f, cc.arm_lqi.n_bytes_nn_bias);
     cc.m_ups_weights_hevc = get_coded(f, cc.ups_lqi.n_bytes_nn_weight);
@@ -401,13 +433,27 @@ static bool read_cc_content(struct cc_bs_frame_coolchic &cc, FILE *f)
     //printf("syn coded w%ld b%ld bytes w %02x %02x %02x\n", cc.m_syn_weights_hevc.size(), cc.m_syn_biases_hevc.size(), cc.m_syn_weights_hevc[0], cc.m_syn_weights_hevc[1], cc.m_syn_weights_hevc[2]);
     //fflush(stdout);
 
-    for (int i = 0; i < cc.n_latent_n_resolutions; i++)
+    int n_latents;
+    // TODO: Skip reading bytes that we don't need to read (high res latents if we don't decode them)
+    for (int i = 0; i < cc.n_latent_n_resolutions - 1; i++)
+    {
         cc.m_latents_hevc.emplace_back(get_coded(f, cc.n_bytes_per_latent[i]));
+    }
+
+    // Read weights for high-res models
+    cc.m_armhigh_weights_hevc = get_coded(f, cc.armhigh_lqi.n_bytes_nn_weight);
+    cc.m_armhigh_biases_hevc = get_coded(f, cc.armhigh_lqi.n_bytes_nn_bias);
+    cc.m_upshigh_weights_hevc = get_coded(f, cc.upshigh_lqi.n_bytes_nn_weight);
+    cc.m_upshigh_biases_hevc = get_coded(f, cc.upshigh_lqi.n_bytes_nn_bias);
+    cc.m_synhigh_weights_hevc = get_coded(f, cc.synhigh_lqi.n_bytes_nn_weight);
+    cc.m_synhigh_biases_hevc = get_coded(f, cc.synhigh_lqi.n_bytes_nn_bias);
+
+    cc.m_latents_hevc.emplace_back(get_coded(f, cc.n_bytes_per_latent[cc.n_latent_n_resolutions - 1]));
 
     return true;
 }
 
-struct cc_bs_frame *cc_bs::decode_frame(struct cc_bs_frame const *prev_coded_I_frame_symbols, struct cc_bs_frame const *prev_coded_frame_symbols, int verbosity)
+struct cc_bs_frame *cc_bs::decode_frame(struct cc_bs_frame const *prev_coded_I_frame_symbols, struct cc_bs_frame const *prev_coded_frame_symbols, int verbosity, bool decode_lowres)
 {
     cc_bs_frame *result = new cc_bs_frame();
     if (!read_frame_header(m_f, result->m_frame_header, verbosity))
@@ -471,7 +517,7 @@ struct cc_bs_frame *cc_bs::decode_frame(struct cc_bs_frame const *prev_coded_I_f
     // read coolchic weights and latents.
     for (auto &cc: result->m_coolchics)
     {
-        if (!read_cc_content(cc, m_f))
+        if (!read_cc_content(cc, m_f, decode_lowres))
         {
             delete result;
             return NULL;

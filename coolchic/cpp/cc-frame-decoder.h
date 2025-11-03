@@ -22,6 +22,10 @@ public:
           m_upsw(NULL),
           m_ups_n_preconcat(-1),
           m_upsw_preconcat(NULL),
+          m_upsscale_n(-1),
+          m_upsscalew(NULL),
+          m_upsscale_n_preconcat(-1),
+          m_upsscalew_preconcat(NULL),
           m_syn_n_branches(1), // historic -- only single branch now.
           m_syn_n_layers(-1),
           m_synw(NULL),
@@ -44,7 +48,7 @@ public:
                 m_output_chroma_format = m_gop_header.frame_data_type == 1 ? 420 : 444;
           };
 
-    ~cc_frame_decoder() {delete[] m_mlpw_t; delete[] m_mlpb; delete[] m_upsw; delete[] m_upsw_preconcat; delete[] m_synw; delete[] m_synb;};
+    ~cc_frame_decoder() {delete[] m_mlpw_t; delete[] m_mlpb; delete[] m_upsw; delete[] m_upsw_preconcat; delete[] m_upsscalew; delete[] m_upsscalew_preconcat; delete[] m_synw; delete[] m_synb;};
 public:
     int get_syn_idx(int branch_idx, int layer_idx) { return branch_idx*m_syn_n_layers + layer_idx; }
 
@@ -55,9 +59,14 @@ public:
     int m_frame_data_type;
 
 public:
-    struct frame_memory<SYN_INT_FLOAT> *decode_frame(struct cc_bs_frame_coolchic &frame_symbols);
+    struct frame_memory<SYN_INT_FLOAT> *decode_frame(struct cc_bs_frame_coolchic &frame_symbols, bool decode_lowres);
 
 private:
+    enum DEC_LVL
+    {
+        HIGHRES,
+        LOWRES
+    };
     weights_biases *m_mlpw_t;
     weights_biases *m_mlpb;
     weights_biases  m_mlpwOUT;
@@ -68,6 +77,11 @@ private:
     weights_biases_ups *m_upsw;
     int             m_ups_n_preconcat;
     weights_biases_ups *m_upsw_preconcat;
+
+    int             m_upsscale_n;
+    weights_biases_ups *m_upsscalew;
+    int             m_upsscale_n_preconcat;
+    weights_biases_ups *m_upsscalew_preconcat;
 
     int             m_syn_n_branches;
     int             m_syn_n_layers;
@@ -109,17 +123,17 @@ private:
     std::vector<bool> m_zero_layer;
 
 private:
-    void            read_arm(struct cc_bs_frame_coolchic &frame_symbols);
-    void            read_ups(struct cc_bs_frame_coolchic &frame_symbols);
-    void            read_syn(struct cc_bs_frame_coolchic &frame_symbols);
+    void            read_arm(struct cc_bs_frame_coolchic &frame_symbols, enum DEC_LVL dec_lvl);
+    void            read_ups(struct cc_bs_frame_coolchic &frame_symbols, enum DEC_LVL dec_lvl);
+    void            read_syn(struct cc_bs_frame_coolchic &frame_symbols, enum DEC_LVL dec_lvl, int n_layers_in);
     bool            can_fuse(struct cc_bs_frame_coolchic &frame_symbols);
-    void            check_allocations(struct cc_bs_frame_coolchic &frame_symbols);
+    void            check_allocations(struct cc_bs_frame_coolchic &frame_symbols, bool decode_highres);
 
-    void            run_arm(struct cc_bs_frame_coolchic &frame_symbols);
-    void            run_ups(struct cc_bs_frame_coolchic &frame_symbols);
+    void            run_arm(struct cc_bs_frame_coolchic &frame_symbols, enum DEC_LVL dec_lvl, enum DEC_LVL destination);
+    void            run_ups(struct cc_bs_frame_coolchic &frame_symbols, enum DEC_LVL destination);
     frame_memory<SYN_INT_FLOAT>   *run_syn_blend1(struct cc_bs_frame_coolchic &frame_symbols, int n_planes, int branch_no, frame_memory<SYN_INT_FLOAT> *syn_in, frame_memory<SYN_INT_FLOAT> *syn_out);
     frame_memory<SYN_INT_FLOAT>   *run_syn_blend2(struct cc_bs_frame_coolchic &frame_symbols, int n_planes, int branch_no, frame_memory<SYN_INT_FLOAT> *syn_in, frame_memory<SYN_INT_FLOAT> *syn_out);
-    frame_memory<SYN_INT_FLOAT>   *run_syn_branch(struct cc_bs_frame_coolchic &frame_symbols, int branch_no, frame_memory<SYN_INT_FLOAT> *syn_in, frame_memory<SYN_INT_FLOAT> *syn_out, frame_memory<SYN_INT_FLOAT> *syn_tmp);
-    frame_memory<SYN_INT_FLOAT>   *run_syn(struct cc_bs_frame_coolchic &frame_symbols);
+    frame_memory<SYN_INT_FLOAT>   *run_syn_branch(struct cc_bs_frame_coolchic &frame_symbols, int branch_no, frame_memory<SYN_INT_FLOAT> *syn_in, frame_memory<SYN_INT_FLOAT> *syn_out, frame_memory<SYN_INT_FLOAT> *syn_tmp, enum DEC_LVL destination);
+    frame_memory<SYN_INT_FLOAT>   *run_syn(struct cc_bs_frame_coolchic &frame_symbols, enum DEC_LVL destination);
 };
 

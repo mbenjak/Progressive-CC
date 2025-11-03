@@ -1,3 +1,4 @@
+Copyright 2025 Institute for Information Processing, Leibniz University Hannover
 Copyright 2023-2025 Orange
 
 Redistribution and use in source and binary forms, with or without modification,

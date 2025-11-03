@@ -19,7 +19,6 @@ void SYN_NAME(int KS,
               P *kw7_40, P *kb40, P *kw40_3, P *kb3,
               int h_in, int w_in, int stride_in, int plane_stride_in, int N_IN, int N_HIDDEN, P *in, int N_OUT, P *out)
 {
-    //printf("%s(ks=%d N_IN=%d N_HIDDEN=%d N_OUT=%d\n", xstr(SYN_NAME), KS, N_IN, N_HIDDEN, N_OUT);
 
 #ifdef SYN_KS
     int const ks = SYN_KS;
@@ -68,6 +67,7 @@ void SYN_NAME(int KS,
         {
             P *kw = kw7_40;
             P *kb = kb40;
+            //kw += n_hidden;
 
             for (int i = 0; i < n_hidden; i++)
                 hidden[i] = kb[i];

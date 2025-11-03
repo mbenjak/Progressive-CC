@@ -87,6 +87,10 @@ class CoolChicEncoderParameter:
     ups_k_size: int = 8
     ups_preconcat_k_size: int = 7
 
+    seperate_synthesis: bool = False
+    seperate_upsampling: bool = False
+    seperate_arm: bool = False
+
     # ==================== Not set by the init function ===================== #
     #: Automatically computed, number of different latent resolutions
     latent_n_grids: int = field(init=False)
@@ -135,6 +139,8 @@ class CoolChicEncoderOutput(TypedDict):
 
     Args:
         raw_out (Tensor): Output of the synthesis :math:`([B, C, H, W])`.
+        low_res_raw_out (Tensor): Output of the synthesis for the low 
+            resolution :math:`([B, C, H, W])`.
         rate (Tensor): rate associated to each latent (in bits). Shape is
             :math:`(N)`, with :math:`N` the total number of latent variables.
         additional_data (Dict[str, Any]): Any other data required to compute
@@ -142,6 +148,7 @@ class CoolChicEncoderOutput(TypedDict):
     """
 
     raw_out: Tensor
+    low_res_raw_out: Tensor
     rate: Tensor
     additional_data: Dict[str, Any]
 
@@ -178,7 +185,7 @@ class CoolChicEncoder(nn.Module):
         self.latent_grids = nn.ParameterList()
         for i in range(self.param.latent_n_grids):
             h_grid, w_grid = [int(math.ceil(x / (2**i))) for x in self.param.img_size]
-            c_grid = self.param.n_ft_per_res[i]
+            c_grid = 1
             cur_size = (1, c_grid, h_grid, w_grid)
 
             self.size_per_latent.append(cur_size)
@@ -193,11 +200,26 @@ class CoolChicEncoder(nn.Module):
 
         # Instantiate the synthesis MLP with as many inputs as the number
         # of latent channels
-        self.synthesis = Synthesis(
+        if self.param.seperate_synthesis:
+            self.synthesis = Synthesis(
+            sum([latent_size[1] for latent_size in self.size_per_latent[1:]]),
+            self.param.layers_synthesis,
+        )
+            self.synthesis_highres = Synthesis(
+                sum([latent_size[1] for latent_size in self.size_per_latent]),
+                self.param.layers_synthesis,
+            )
+        else:
+            self.synthesis = Synthesis(
             sum([latent_size[1] for latent_size in self.size_per_latent]),
             self.param.layers_synthesis,
         )
+            self.synthesis_highres = None
         # ================== Synthesis related stuff ================= #
+
+        # ============ Low-res representation related stuff ========== #
+        #self.latent_subsampling = LatentSubsampling()
+        # ============ Low-res representation related stuff ========== #
 
         # ===================== Upsampling stuff ===================== #
         self.upsampling = Upsampling(
@@ -209,6 +231,20 @@ class CoolChicEncoder(nn.Module):
             n_ups_kernel=self.param.latent_n_grids - 1,
             n_ups_preconcat_kernel=self.param.latent_n_grids - 1,
         )
+
+        if self.param.seperate_upsampling:
+            self.upsampling_highres = Upsampling(
+                ups_k_size=self.param.ups_k_size,
+                ups_preconcat_k_size=self.param.ups_preconcat_k_size,
+                # Instantiate one different upsampling and pre-concatenation
+                # filters for each of the upsampling step. Could also be set to one
+                # to share the same filter across all latents.
+                n_ups_kernel=self.param.latent_n_grids - 1,
+                n_ups_preconcat_kernel=self.param.latent_n_grids - 1,
+            )
+        else:
+            self.upsampling_highres = None
+
         # ===================== Upsampling stuff ===================== #
 
         # ===================== ARM related stuff ==================== #
@@ -252,10 +288,22 @@ class CoolChicEncoder(nn.Module):
         )
 
         self.arm = Arm(self.param.dim_arm, self.param.n_hidden_layers_arm)
+
+        if self.param.seperate_arm:
+            self.arm_highres = Arm(self.param.dim_arm, self.param.n_hidden_layers_arm)
+        else:
+            self.arm_highres = None
         # ===================== ARM related stuff ==================== #
 
         # Something like ['arm', 'synthesis', 'upsampling']
         self.modules_to_send = [tmp.name for tmp in fields(DescriptorCoolChic)]
+        if not self.param.seperate_synthesis:
+            self.modules_to_send.remove("synthesis_highres")
+        if not self.param.seperate_upsampling:
+            self.modules_to_send.remove("upsampling_highres")
+        if not self.param.seperate_arm:
+            self.modules_to_send.remove("arm_highres")
+
 
         # ======================== Monitoring ======================== #
         # Pretty string representing the decoder complexity
@@ -293,7 +341,8 @@ class CoolChicEncoder(nn.Module):
         soft_round_temperature: Optional[Tensor] = torch.tensor(0.3),
         noise_parameter: Optional[Tensor] = torch.tensor(1.0),
         AC_MAX_VAL: int = -1,
-        flag_additional_outputs: bool = False,
+        flag_additional_outputs: bool = False
+
     ) -> CoolChicEncoderOutput:
         """Perform CoolChicEncoder forward pass, to be used during the training.
         The main step are as follows:
@@ -405,12 +454,20 @@ class CoolChicEncoder(nn.Module):
 
         # Get all the B latent variables as a single one dimensional vector
         flat_latent = torch.cat(
-            [spatial_latent_i.view(-1) for spatial_latent_i in decoder_side_latent],
+            [spatial_latent_i.reshape(-1) for spatial_latent_i in decoder_side_latent],
             dim=0,
         )
 
         # Feed the spatial context to the arm MLP and get mu and scale
-        flat_mu, flat_scale, flat_log_scale = self.arm(flat_context)
+        if self.arm_highres is not None:
+            n_elem_layer_0 = math.prod(self.size_per_latent[0])
+            flat_mu, flat_scale, flat_log_scale = self.arm(flat_context[n_elem_layer_0:])
+            flat_mu_highres, flat_scale_highres, flat_log_scale_highres = self.arm_highres(flat_context[:n_elem_layer_0])
+            flat_mu = torch.cat([flat_mu_highres, flat_mu], dim=0)
+            flat_scale = torch.cat([flat_scale_highres, flat_scale], dim=0)
+            flat_log_scale = torch.cat([flat_log_scale_highres, flat_log_scale], dim=0)
+        else:
+            flat_mu, flat_scale, flat_log_scale = self.arm(flat_context)
 
         # Compute the rate (i.e. the entropy of flat latent knowing mu and scale)
         proba = torch.clamp_min(
@@ -421,9 +478,18 @@ class CoolChicEncoder(nn.Module):
         flat_rate = -torch.log2(proba)
 
         # Upsampling and synthesis to get the output
-        synthesis_output = self.synthesis(self.upsampling(decoder_side_latent))
+        latent_up_lowres = self.upsampling(decoder_side_latent[1:])
+        low_res_synthesis_output = self.synthesis(latent_up_lowres)
 
-        synthesis_output = synthesis_output
+        if self.upsampling_highres is not None:
+            latent_up = self.upsampling_highres(decoder_side_latent)
+        else:
+            latent_up = self.upsampling(decoder_side_latent)
+        
+        if self.synthesis_highres is not None:
+            synthesis_output = self.synthesis_highres(latent_up)
+        else:
+            synthesis_output = self.synthesis(latent_up)
 
         additional_data = {}
         if flag_additional_outputs:
@@ -465,6 +531,7 @@ class CoolChicEncoder(nn.Module):
 
         res: CoolChicEncoderOutput = {
             "raw_out": synthesis_output,
+            "low_res_raw_out": low_res_synthesis_output,
             "rate": flat_rate,
             "additional_data": additional_data,
         }
@@ -487,12 +554,22 @@ class CoolChicEncoder(nn.Module):
             }
         )
         param.update({f"arm.{k}": v for k, v in self.arm.get_param().items()})
+        if self.arm_highres is not None:
+            param.update({f"arm_highres.{k}": v for k, v in self.arm_highres.get_param().items()})
         param.update(
             {f"upsampling.{k}": v for k, v in self.upsampling.get_param().items()}
         )
+        if self.upsampling_highres is not None:
+            param.update(
+                {f"upsampling_highres.{k}": v for k, v in self.upsampling_highres.get_param().items()}
+            )
         param.update(
             {f"synthesis.{k}": v for k, v in self.synthesis.get_param().items()}
         )
+        if self.synthesis_highres is not None:
+            param.update(
+                {f"synthesis_highres.{k}": v for k, v in self.synthesis_highres.get_param().items()}
+            )
         return param
 
     def set_param(self, param: OrderedDict[str, Tensor]):
@@ -533,8 +610,14 @@ class CoolChicEncoder(nn.Module):
         namely the latent grids, the arm, the upsampling and the weights.
         """
         self.arm.reinitialize_parameters()
+        if self.arm_highres is not None:
+            self.arm_highres.reinitialize_parameters()
         self.upsampling.reinitialize_parameters()
+        if self.upsampling_highres is not None:
+            self.upsampling_highres.reinitialize_parameters()
         self.synthesis.reinitialize_parameters()
+        if self.synthesis_highres is None:
+            self.synthesis_highres.reinitialize_parameters()
         self.initialize_latent_grids()
 
         # Reset the quantization steps and exp-golomb count of the neural

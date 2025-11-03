@@ -32,6 +32,8 @@
 
 float time_bac_seconds = 0.0;
 float time_arm_seconds = 0.0;
+float time_arm_lowres_seconds = 0.0;
+float time_arm_highres_seconds = 0.0;
 float time_ups_seconds = 0.0;
 float time_syn_seconds = 0.0;
 float time_blend_seconds = 0.0;
@@ -974,15 +976,15 @@ void put_444_ref_frame(std::vector<struct frame_memory<P> *> &frame_444_buffer, 
 }
 
 #if defined(CCDECAPI_CPU)
-int cc_decode_cpu(std::string &bitstream_filename, std::string &out_filename, int output_bitdepth, int output_chroma_format, int verbosity)
+int cc_decode_cpu(std::string &bitstream_filename, std::string &out_filename, int output_bitdepth, int output_chroma_format, int verbosity, bool decode_lowres)
 #elif defined(CCDECAPI_AVX2_OPTIONAL)
-int cc_decode_avx2_optional(std::string &bitstream_filename, std::string &out_filename, int output_bitdepth, int output_chroma_format, bool use_avx2, int verbosity)
+int cc_decode_avx2_optional(std::string &bitstream_filename, std::string &out_filename, int output_bitdepth, int output_chroma_format, bool use_avx2, int verbosity, bool decode_lowres)
 #elif defined(CCDECAPI_AVX2)
-int cc_decode_avx2(std::string &bitstream_filename, std::string &out_filename, int output_bitdepth, int output_chroma_format, int verbosity)
+int cc_decode_avx2(std::string &bitstream_filename, std::string &out_filename, int output_bitdepth, int output_chroma_format, int verbosity, bool decode_lowres)
 #else
 #error must have one of CCDECAPI_CPU, CCDECAPI_AVX2 or CCDECAPI_AVX2_OPTIONAL defined.
 #endif
-{
+{    
     if (bitstream_filename == "")
     {
         printf("must specify a bitstream\n");
@@ -996,6 +998,13 @@ int cc_decode_avx2(std::string &bitstream_filename, std::string &out_filename, i
     {
         printf("cannot open %s for reading\n", bitstream_filename.c_str());
         return 1;
+    }
+
+    if (decode_lowres)
+    {
+        printf("Decoding low-res reconstruction instead of the full resolution\n");
+        bs.m_gop_header.img_h = bs.m_gop_header.img_h / 2;
+        bs.m_gop_header.img_w = bs.m_gop_header.img_w / 2;
     }
 
     struct cc_bs_gop_header &gop_header = bs.m_gop_header;
@@ -1055,7 +1064,7 @@ int cc_decode_avx2(std::string &bitstream_filename, std::string &out_filename, i
         for (auto &cc: frame_symbols->m_coolchics)
         {
             // COPY FOR NOW TO GET OTHER LOGIC RIGHT
-            struct frame_memory<SYN_INT_FLOAT> *out = frame_decoder.decode_frame(cc);
+            struct frame_memory<SYN_INT_FLOAT> *out = frame_decoder.decode_frame(cc, decode_lowres);
             if (out == NULL)
             {
                 printf("decoding failed!\n");
@@ -1234,8 +1243,8 @@ int cc_decode_avx2(std::string &bitstream_filename, std::string &out_filename, i
         time_all_seconds = (float)elapsed_all.count();
 
         if (verbosity >= 1)
-            printf("time: arm %g ups %g syn %g blend %g warp %g bpred %g all %g\n",
-                    time_arm_seconds, time_ups_seconds, time_syn_seconds, time_blend_seconds, time_warp_seconds, time_bpred_seconds, time_all_seconds);
+            printf("time: arm %g (%g low %g high) ups %g syn %g blend %g warp %g bpred %g all %g\n",
+                    time_arm_seconds, time_arm_lowres_seconds, time_arm_highres_seconds, time_ups_seconds, time_syn_seconds, time_blend_seconds, time_warp_seconds, time_bpred_seconds, time_all_seconds);
         fflush(stdout);
     }
 
@@ -1297,6 +1306,7 @@ int main(int argc, const char* argv[])
     bool use_avx2 = false;
     bool use_auto = false;
     int  verbosity = 0;
+    bool decode_lowres = true;
 
     for (int i = 1; i < argc; i++)
     {
@@ -1345,7 +1355,7 @@ int main(int argc, const char* argv[])
             use_avx2 = true;
         }
     }
-    int result = cc_decode_avx2_optional(bitstream_filename, out, output_bitdepth, output_chroma_format, use_avx2, verbosity);
+    int result = cc_decode_avx2_optional(bitstream_filename, out, output_bitdepth, output_chroma_format, use_avx2, verbosity, decode_lowres);
     return result;
 }
 #endif

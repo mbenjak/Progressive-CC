@@ -21,6 +21,8 @@
 #include "syn_cpu.h"
 
 extern float time_arm_seconds;
+extern float time_arm_lowres_seconds;
+extern float time_arm_highres_seconds;
 extern float time_ups_seconds;
 extern float time_syn_seconds;
 extern float time_blend_seconds;
@@ -220,7 +222,7 @@ void decode_upsweights_qi(weights_biases_ups &result, TDecBinCABAC *cabac, int c
     fflush(stdout);
 }
 
-void cc_frame_decoder::read_arm(struct cc_bs_frame_coolchic &frame_symbols)
+void cc_frame_decoder::read_arm(struct cc_bs_frame_coolchic &frame_symbols, enum DEC_LVL dec_lvl)
 {
     if (frame_symbols.n_hidden_layers_arm != m_mlp_n_hidden_layers_arm)
     {
@@ -239,24 +241,40 @@ void cc_frame_decoder::read_arm(struct cc_bs_frame_coolchic &frame_symbols)
     TDecBinCABAC cabac_weights;
     TDecBinCABAC cabac_biases;
 
-    bs_fifo_weights = frame_symbols.m_arm_weights_hevc;
-    cabac_weights.init(&bs_weights);
-    cabac_weights.start();
+    struct cc_bs_layer_quant_info *arm_lqi;
+    if (dec_lvl == LOWRES)
+    {
+        bs_fifo_weights = frame_symbols.m_arm_weights_hevc;
+        cabac_weights.init(&bs_weights);
+        cabac_weights.start();
 
-    bs_fifo_biases = frame_symbols.m_arm_biases_hevc;
-    cabac_biases.init(&bs_biases);
-    cabac_biases.start();
+        bs_fifo_biases = frame_symbols.m_arm_biases_hevc;
+        cabac_biases.init(&bs_biases);
+        cabac_biases.start();
 
-    struct cc_bs_layer_quant_info &arm_lqi = frame_symbols.arm_lqi;
+        arm_lqi = &frame_symbols.arm_lqi;
+    }
+    else // HIGHRES
+    {
+        bs_fifo_weights = frame_symbols.m_armhigh_weights_hevc;
+        cabac_weights.init(&bs_weights);
+        cabac_weights.start();
 
-    int q_step_w_shift = Q_STEP_ARM_WEIGHT_SHIFT[arm_lqi.q_step_index_nn_weight];
-    int q_step_b_shift = Q_STEP_ARM_BIAS_SHIFT[arm_lqi.q_step_index_nn_bias];
+        bs_fifo_biases = frame_symbols.m_armhigh_biases_hevc;
+        cabac_biases.init(&bs_biases);
+        cabac_biases.start();
+
+        arm_lqi = &frame_symbols.armhigh_lqi;
+    }
+
+    int q_step_w_shift = Q_STEP_ARM_WEIGHT_SHIFT[arm_lqi->q_step_index_nn_weight];
+    int q_step_b_shift = Q_STEP_ARM_BIAS_SHIFT[arm_lqi->q_step_index_nn_bias];
     int arm_n_features = frame_symbols.dim_arm;
     int32_t bucket[arm_n_features*arm_n_features]; // we transpose from this.
 
     for (int idx = 0; idx < frame_symbols.n_hidden_layers_arm; idx++)
     {
-        decode_weights_qi(&bucket[0], &cabac_weights, arm_lqi.scale_index_nn_weight, arm_n_features*arm_n_features, q_step_w_shift, ARM_PRECISION);
+        decode_weights_qi(&bucket[0], &cabac_weights, arm_lqi->scale_index_nn_weight, arm_n_features*arm_n_features, q_step_w_shift, ARM_PRECISION);
         // transpose.
         m_mlpw_t[idx].update_to(arm_n_features*arm_n_features);
         int kidx = 0;
@@ -265,14 +283,14 @@ void cc_frame_decoder::read_arm(struct cc_bs_frame_coolchic &frame_symbols)
             {
                 m_mlpw_t[idx].data[kidx++] = bucket[kx*arm_n_features+ky];
             }
-        decode_weights_qi(m_mlpb[idx], &cabac_biases, arm_lqi.scale_index_nn_bias, arm_n_features, q_step_b_shift, ARM_PRECISION*2);
+        decode_weights_qi(m_mlpb[idx], &cabac_biases, arm_lqi->scale_index_nn_bias, arm_n_features, q_step_b_shift, ARM_PRECISION*2);
     }
-    decode_weights_qi(m_mlpwOUT, &cabac_weights, arm_lqi.scale_index_nn_weight, arm_n_features*2, q_step_w_shift, ARM_PRECISION);
-    decode_weights_qi(m_mlpbOUT, &cabac_biases,  arm_lqi.scale_index_nn_bias, 2, q_step_b_shift, ARM_PRECISION*2);
+    decode_weights_qi(m_mlpwOUT, &cabac_weights, arm_lqi->scale_index_nn_weight, arm_n_features*2, q_step_w_shift, ARM_PRECISION);
+    decode_weights_qi(m_mlpbOUT, &cabac_biases,  arm_lqi->scale_index_nn_bias, 2, q_step_b_shift, ARM_PRECISION*2);
 }
 
 
-void cc_frame_decoder::read_ups(struct cc_bs_frame_coolchic &frame_symbols)
+void cc_frame_decoder::read_ups(struct cc_bs_frame_coolchic &frame_symbols, enum DEC_LVL dec_lvl)
 {
     // zero latents => no upsampling.
     if (frame_symbols.latents_zero)
@@ -298,26 +316,37 @@ void cc_frame_decoder::read_ups(struct cc_bs_frame_coolchic &frame_symbols)
 
     TDecBinCABAC cabac_weights;
 
-    bs_fifo_weights = frame_symbols.m_ups_weights_hevc;
-    cabac_weights.init(&bs_weights);
-    cabac_weights.start();
-    struct cc_bs_layer_quant_info &ups_lqi = frame_symbols.ups_lqi;
+    struct cc_bs_layer_quant_info *ups_lqi;
+    if (dec_lvl == LOWRES)
+    {
+        bs_fifo_weights = frame_symbols.m_ups_weights_hevc;
+        cabac_weights.init(&bs_weights);
+        cabac_weights.start();
+        ups_lqi = &frame_symbols.ups_lqi;
+    }
+    else // HIGHRES
+    {
+        bs_fifo_weights = frame_symbols.m_upshigh_weights_hevc;
+        cabac_weights.init(&bs_weights);
+        cabac_weights.start();
+        ups_lqi = &frame_symbols.upshigh_lqi;
+    }
 
-    int q_step_w_shift = Q_STEP_UPS_SHIFT[ups_lqi.q_step_index_nn_weight];
+    int q_step_w_shift = Q_STEP_UPS_SHIFT[ups_lqi->q_step_index_nn_weight];
 
     // read ups layers
     for (int lidx = 0; lidx < m_ups_n; lidx++)
     {
-        decode_upsweights_qi(m_upsw[lidx], &cabac_weights, ups_lqi.scale_index_nn_weight, frame_symbols.ups_k_size, q_step_w_shift, UPS_PRECISION);
+        decode_upsweights_qi(m_upsw[lidx], &cabac_weights, ups_lqi->scale_index_nn_weight, frame_symbols.ups_k_size, q_step_w_shift, UPS_PRECISION);
     }
     // read ups_preconcat layers.
     for (int lidx = 0; lidx < m_ups_n_preconcat; lidx++)
     {
-        decode_upsweights_qi(m_upsw_preconcat[lidx], &cabac_weights, ups_lqi.scale_index_nn_weight, frame_symbols.ups_preconcat_k_size, q_step_w_shift, UPS_PRECISION);
+        decode_upsweights_qi(m_upsw_preconcat[lidx], &cabac_weights, ups_lqi->scale_index_nn_weight, frame_symbols.ups_preconcat_k_size, q_step_w_shift, UPS_PRECISION);
     }
 }
 
-void cc_frame_decoder::read_syn(struct cc_bs_frame_coolchic &frame_symbols)
+void cc_frame_decoder::read_syn(struct cc_bs_frame_coolchic &frame_symbols, enum DEC_LVL dec_lvl, int n_layers_in)
 {
     if (frame_symbols.n_syn_layers != m_syn_n_layers)
     {
@@ -337,35 +366,49 @@ void cc_frame_decoder::read_syn(struct cc_bs_frame_coolchic &frame_symbols)
     TDecBinCABAC cabac_weights;
     TDecBinCABAC cabac_biases;
 
-    bs_fifo_weights = frame_symbols.m_syn_weights_hevc;
-    bs_fifo_biases = frame_symbols.m_syn_biases_hevc;
-    cabac_weights.init(&bs_weights);
-    cabac_weights.start();
-    cabac_biases.init(&bs_biases);
-    cabac_biases.start();
-    struct cc_bs_layer_quant_info &syn_lqi = frame_symbols.syn_lqi;
+    struct cc_bs_layer_quant_info *syn_lqi;
+    if (dec_lvl == LOWRES)
+    {
+        bs_fifo_weights = frame_symbols.m_syn_weights_hevc;
+        bs_fifo_biases = frame_symbols.m_syn_biases_hevc;
+        cabac_weights.init(&bs_weights);
+        cabac_weights.start();
+        cabac_biases.init(&bs_biases);
+        cabac_biases.start();
+        syn_lqi = &frame_symbols.syn_lqi;
+    }
+    else // HIGHRES
+    {
+        bs_fifo_weights = frame_symbols.m_synhigh_weights_hevc;
+        bs_fifo_biases = frame_symbols.m_synhigh_biases_hevc;
+        cabac_weights.init(&bs_weights);
+        cabac_weights.start();
+        cabac_biases.init(&bs_biases);
+        cabac_biases.start();
+        syn_lqi = &frame_symbols.synhigh_lqi;
+    }
 
-    int q_step_w_shift = Q_STEP_SYN_WEIGHT_SHIFT[syn_lqi.q_step_index_nn_weight];
-    int q_step_b_shift = Q_STEP_SYN_BIAS_SHIFT[syn_lqi.q_step_index_nn_bias];
+    int q_step_w_shift = Q_STEP_SYN_WEIGHT_SHIFT[syn_lqi->q_step_index_nn_weight];
+    int q_step_b_shift = Q_STEP_SYN_BIAS_SHIFT[syn_lqi->q_step_index_nn_bias];
 
     // blend values.
     if (m_syn_n_branches > 1)
     {
-        decode_weights_qi(m_syn_blends, &cabac_weights, syn_lqi.scale_index_nn_weight, m_syn_n_branches, q_step_w_shift, SYN_WEIGHT_PRECISION);
+        decode_weights_qi(m_syn_blends, &cabac_weights, syn_lqi->scale_index_nn_weight, m_syn_n_branches, q_step_w_shift, SYN_WEIGHT_PRECISION);
     }
 
     // layer weights.
     for (int bidx = 0; bidx < 1; bidx++) // no more branches.
     {
-        int n_in_ft = frame_symbols.n_latent_n_resolutions; // !!! features per layer
+        int n_in_ft = n_layers_in; // !!! features per layer
         for (int lidx = 0; lidx < frame_symbols.n_syn_layers; lidx++)
         {
             struct cc_bs_syn_layer &syn = frame_symbols.layers_synthesis[lidx];
             int n_weights = n_in_ft * syn.ks*syn.ks * syn.n_out_ft;
             int n_biases = syn.n_out_ft;
 
-            decode_weights_qi(m_synw[get_syn_idx(bidx, lidx)], &cabac_weights, syn_lqi.scale_index_nn_weight, n_weights, q_step_w_shift, SYN_WEIGHT_PRECISION);
-            decode_weights_qi(m_synb[get_syn_idx(bidx, lidx)], &cabac_biases,  syn_lqi.scale_index_nn_bias, n_biases,  q_step_b_shift, SYN_WEIGHT_PRECISION*2);
+            decode_weights_qi(m_synw[get_syn_idx(bidx, lidx)], &cabac_weights, syn_lqi->scale_index_nn_weight, n_weights, q_step_w_shift, SYN_WEIGHT_PRECISION);
+            decode_weights_qi(m_synb[get_syn_idx(bidx, lidx)], &cabac_biases,  syn_lqi->scale_index_nn_bias, n_biases,  q_step_b_shift, SYN_WEIGHT_PRECISION*2);
 
             n_in_ft = syn.n_out_ft;
         }
@@ -384,11 +427,11 @@ bool cc_frame_decoder::can_fuse(struct cc_bs_frame_coolchic &frame_symbols)
     return fused;
 }
 
-void cc_frame_decoder::check_allocations(struct cc_bs_frame_coolchic &frame_symbols)
+void cc_frame_decoder::check_allocations(struct cc_bs_frame_coolchic &frame_symbols, bool decode_highres)
 {
     int const latent_n_resolutions = frame_symbols.n_latent_n_resolutions;
 
-    int n_max_planes = latent_n_resolutions;
+    int n_max_planes = decode_highres ? latent_n_resolutions : (latent_n_resolutions - 1);
     m_arm_pad = 4; // by how much the arm frame is padded.
     m_ups_pad = (std::max(frame_symbols.ups_k_size, frame_symbols.ups_preconcat_k_size)+1)/2;
 
@@ -433,6 +476,8 @@ void cc_frame_decoder::check_allocations(struct cc_bs_frame_coolchic &frame_symb
          layer_number < frame_symbols.n_latent_n_resolutions;
          layer_number++, h_grid = (h_grid+1)/2, w_grid = (w_grid+1)/2)
     {
+        if (m_verbosity >= 3)
+            printf("arm:layer %d h_grid=%d w_grid=%d\n", layer_number, h_grid, w_grid);
         m_h_pyramid[layer_number] = h_grid;
         m_w_pyramid[layer_number] = w_grid;
         m_plane_pyramid[layer_number].update_to(h_grid, w_grid, m_max_pad, 1);
@@ -483,30 +528,56 @@ void ups_upsample_avx2(int ksx2, UPS_INT_FLOAT *kw, frame_memory<UPS_INT_FLOAT> 
 }
 #endif
 
-void cc_frame_decoder::run_arm(struct cc_bs_frame_coolchic &frame_symbols)
+void cc_frame_decoder::run_arm(struct cc_bs_frame_coolchic &frame_symbols, enum DEC_LVL dec_lvl, enum DEC_LVL destination)
 {
     // RUN ARM
     // latent-layer processing.
-    for (int layer_number = 0; layer_number < frame_symbols.n_latent_n_resolutions; layer_number++)
+    if (m_verbosity >= 3)
     {
-        int const h_grid = m_h_pyramid[layer_number];
-        int const w_grid = m_w_pyramid[layer_number];
+        printf("arm:run_arm on %d latents\n", frame_symbols.n_latent_n_resolutions);
+        fflush(stdout);
+    }
+    int start_layer = (dec_lvl == HIGHRES) ? 0 : 1;
+    int end_layer = (dec_lvl == HIGHRES) ? 1 : frame_symbols.n_latent_n_resolutions;
+    for (int layer_number = start_layer; layer_number < end_layer; layer_number++)
+    {
+        int h_grid;
+        int w_grid;
+        if (destination == HIGHRES){
+            h_grid = m_h_pyramid[layer_number];
+            w_grid = m_w_pyramid[layer_number];
+        }else{
+            h_grid = m_h_pyramid[layer_number - 1];
+            w_grid = m_w_pyramid[layer_number - 1];
+        }
 
         if (m_verbosity >= 3)
-            printf("arm:starting layer %d\n", layer_number);
-        fflush(stdout);
+        {
+            printf("arm:starting layer %d h_grid=%d w_grid=%d\n", layer_number, h_grid, w_grid);
+            fflush(stdout);
+        }
 
-        auto &bytes = frame_symbols.m_latents_hevc[layer_number];
+        auto &bytes = frame_symbols.m_latents_hevc[frame_symbols.n_latent_n_resolutions - layer_number - 1];
         if (bytes.size() == 0)
         {
             // produce a zero layer.
-            m_zero_layer[layer_number] = true;
+            if (destination == LOWRES)
+                m_zero_layer[layer_number - 1] = true;
+            else
+                m_zero_layer[layer_number] = true;
             continue;
         }
-        m_zero_layer[layer_number] = false;
+        if (destination == LOWRES)
+            m_zero_layer[layer_number - 1] = false;
+        else
+            m_zero_layer[layer_number] = false;
 
         //frame_memory *dest = layer_number == 0 ? &m_syn_1 : &m_plane_pyramid[layer_number];
-        frame_memory<int32_t> *dest = &m_plane_pyramid[layer_number];
+        frame_memory<int32_t> *dest;
+        if (destination == LOWRES)
+            dest = &m_plane_pyramid[layer_number - 1];
+        else
+            dest = &m_plane_pyramid[layer_number];
         dest->zero_pad(0, m_arm_pad);
 
         // BAC decoding:
@@ -520,6 +591,24 @@ void cc_frame_decoder::run_arm(struct cc_bs_frame_coolchic &frame_symbols)
 
         BACContext bac_context;
         bac_context.set_layer(&layerBAC, h_grid, w_grid, frame_symbols.hls_sig_blksize);
+
+        if (m_verbosity >= 2)
+        {
+            int flat_counter = 0;
+            int not_sig_counter = 0;
+            int nblk = bac_context.m_nby * bac_context.m_nbx;
+            for (int i = 0; i < nblk; i++)
+            {
+                if (bac_context.m_blk_sig[i] == 0)
+                    not_sig_counter++;
+                if (bac_context.m_blk_flat[i] == 1)
+                    flat_counter++;
+            }
+
+            printf("FLAT_STAT: arm:layer %d h_grid=%d w_grid=%d nblk=%d flat_counter=%d not_sig_counter=%d\n",
+                   layer_number, h_grid, w_grid, nblk, flat_counter, not_sig_counter);
+            
+        }
 
         const auto time_arm_start = std::chrono::steady_clock::now();
 
@@ -572,14 +661,17 @@ void cc_frame_decoder::run_arm(struct cc_bs_frame_coolchic &frame_symbols)
 
                                       bac_context
                                       );
-
         const auto time_arm_done = std::chrono::steady_clock::now();
         const std::chrono::duration<double> arm_elapsed = (time_arm_done-time_arm_start);
         time_arm_seconds += (float)arm_elapsed.count();
+        if (dec_lvl == LOWRES)
+            time_arm_lowres_seconds += (float)arm_elapsed.count();
+        else
+            time_arm_highres_seconds += (float)arm_elapsed.count();
 
     } // layer.
 
-    if (m_verbosity >= 100)
+    if (m_verbosity >= 80)
     {
         printf("ARM OUTPUTS\n");
         for (int p = 0; p < frame_symbols.n_latent_n_resolutions; p++)
@@ -615,7 +707,7 @@ std::vector<frame_memory<int32_t>> *hoop2(std::vector<frame_memory<int32_t>> *pl
     return plane_pyramid;
 }
 
-void cc_frame_decoder::run_ups(struct cc_bs_frame_coolchic &frame_symbols)
+void cc_frame_decoder::run_ups(struct cc_bs_frame_coolchic &frame_symbols, enum DEC_LVL destination)
 {
     const auto time_ups_start = std::chrono::steady_clock::now();
 
@@ -633,11 +725,13 @@ void cc_frame_decoder::run_ups(struct cc_bs_frame_coolchic &frame_symbols)
         return;
     }
 
+    const int n_layers = (destination == HIGHRES) ? frame_symbols.n_latent_n_resolutions : (frame_symbols.n_latent_n_resolutions - 1);
+
     std::vector<frame_memory<UPS_INT_FLOAT>> *ups_input_pyramid;
     if constexpr(std::is_same<UPS_INT_FLOAT, float>::value)
     {
         // !!! temporary -- convert the int arm output to float ups input.
-        for (int layer_number = 0; layer_number < frame_symbols.n_latent_n_resolutions; layer_number++)
+        for (int layer_number = 0; layer_number < n_layers; layer_number++)
         {
             for (int y = 0; y < m_plane_pyramid[layer_number].h; y++)
                 for (int x = 0; x < m_plane_pyramid[layer_number].w; x++)
@@ -660,7 +754,7 @@ void cc_frame_decoder::run_ups(struct cc_bs_frame_coolchic &frame_symbols)
 
     // full-res down to lowest-res.  refine & upsample each as necessary to full res.
     for (int layer_number = 0, h_grid = m_gop_header.img_h, w_grid = m_gop_header.img_w;
-         layer_number < frame_symbols.n_latent_n_resolutions;
+         layer_number < n_layers;
          layer_number++, h_grid = (h_grid+1)/2, w_grid = (w_grid+1)/2)
     {
         if (m_zero_layer[layer_number])
@@ -671,7 +765,7 @@ void cc_frame_decoder::run_ups(struct cc_bs_frame_coolchic &frame_symbols)
         }
         // layer_number 0: hb_layer is (nlatents-1)%nhblayers.
         // n_resolution-2 is number of hb layers max.
-        int preconcat_layer = (frame_symbols.n_latent_n_resolutions-2-layer_number)%m_ups_n_preconcat;
+        int preconcat_layer = (n_layers-2-layer_number)%m_ups_n_preconcat;
         if (layer_number == 0)
         {
             // full res. just a refinement directly to m_syn_1, no upsampling.
@@ -695,7 +789,7 @@ void cc_frame_decoder::run_ups(struct cc_bs_frame_coolchic &frame_symbols)
         frame_memory<UPS_INT_FLOAT> *ups_src = NULL;
         int ups_prec = 0;
 
-        if (layer_number == frame_symbols.n_latent_n_resolutions-1)
+        if (layer_number == n_layers-1)
         {
             // just upsample, no refinement.
             ups_src = &(*ups_input_pyramid)[layer_number];
@@ -725,7 +819,7 @@ void cc_frame_decoder::run_ups(struct cc_bs_frame_coolchic &frame_symbols)
         for (int target_layer = layer_number-1; target_layer >= 0; ups_src = &(*ups_input_pyramid)[target_layer], target_layer--, ups_prec = UPS_PRECISION)
         {
             // upsample layer index to use.
-            int ups_layer = (frame_symbols.n_latent_n_resolutions-2-target_layer)%m_ups_n;
+            int ups_layer = (n_layers-2-target_layer)%m_ups_n;
             // upsample, either to next pyramid level up or, instead of to [0], to m_syn_1[layer_number].
             frame_memory<UPS_INT_FLOAT> *ups_dst = NULL;
             int dst_plane;
@@ -866,9 +960,9 @@ frame_memory<SYN_INT_FLOAT> *cc_frame_decoder::run_syn_blend2(struct cc_bs_frame
 //     return value is either syn_out or syn_tmp.
 // syn_out NULL implies syn processing will remain in syn_in as much as possible (alternating syn_in, syn_tmp if necessary)
 //     return value is either syn_in or syn_tmp.
-frame_memory<SYN_INT_FLOAT> *cc_frame_decoder::run_syn_branch(struct cc_bs_frame_coolchic &frame_symbols, int branch_no, frame_memory<SYN_INT_FLOAT> *syn_in, frame_memory<SYN_INT_FLOAT> *syn_out, frame_memory<SYN_INT_FLOAT> *syn_tmp)
+frame_memory<SYN_INT_FLOAT> *cc_frame_decoder::run_syn_branch(struct cc_bs_frame_coolchic &frame_symbols, int branch_no, frame_memory<SYN_INT_FLOAT> *syn_in, frame_memory<SYN_INT_FLOAT> *syn_out, frame_memory<SYN_INT_FLOAT> *syn_tmp, enum DEC_LVL destination)
 {
-    int    n_syn_in = frame_symbols.n_latent_n_resolutions;
+    int    n_syn_in = (destination == HIGHRES) ? frame_symbols.n_latent_n_resolutions : (frame_symbols.n_latent_n_resolutions - 1);
     frame_memory<SYN_INT_FLOAT> *syn_in_i = NULL; // internal in/out
     frame_memory<SYN_INT_FLOAT> *syn_out_i = NULL; // internal in/out
     if (syn_out == syn_in)
@@ -1033,21 +1127,43 @@ frame_memory<SYN_INT_FLOAT> *cc_frame_decoder::run_syn_branch(struct cc_bs_frame
                 int n_hidden = n_syn_out;
                 n_syn_out = frame_symbols.layers_synthesis[syn_idx+1].n_out_ft;
 
-                // transpose.
                 SYN_INT_FLOAT synw_fused[n_syn_in*n_hidden];
                 int kidx = 0;
-                for (int kx = 0; kx < n_syn_in; kx++)
-                {
-                    for (int ky = 0; ky < n_hidden; ky++)
+                if (n_syn_in == 7 || m_synw[syn_wb_idx].n == n_syn_in * n_hidden){
+                    for (int kx = 0; kx < n_syn_in; kx++)
                     {
-                        synw_fused[kidx++] = m_synw[syn_wb_idx].data[ky*n_syn_in+kx];
+                        for (int ky = 0; ky < n_hidden; ky++)
+                        {
+                            synw_fused[kidx++] = m_synw[syn_wb_idx].data[ky*n_syn_in+kx];
+                        }
+                    }
+                }else{
+                    // we skip the first n_hidden weights, as they are not used.
+                    // The network is designed for an input size of 7, but we can have 6.
+                    // The number is only 6 for the low-res image, if a shared syn is used.
+                    for (int kx = 1; kx < n_syn_in+1; kx++)
+                    {
+                        for (int ky = 0; ky < n_hidden; ky++)
+                        {
+                            synw_fused[kidx++] = m_synw[syn_wb_idx].data[ky*7+kx];
+                        }
                     }
                 }
+
+                if (m_verbosity >= 3)
+                    printf("#out=%d", n_syn_out);
+
 #if defined(CCDECAPI_AVX2)
-                if (m_use_avx2 && n_syn_in == 7)
+                if (m_use_avx2 && (n_syn_in == 7 || n_syn_in == 6))
                 {
-                    if (n_hidden == 48 && n_syn_out == 3)
+                    if (n_hidden == 48 && n_syn_out == 3 && n_syn_in == 7)
                         custom_conv_ks1_in7_hidden48_out3_avx2(1, synw_fused, m_synb[syn_wb_idx].data, m_synw[syn_wb_idx+1].data, m_synb[syn_wb_idx+1].data, m_gop_header.img_h, m_gop_header.img_w, syn_in_i->stride, syn_in_i->plane_stride, n_syn_in, n_hidden, syn_in_i->origin(), n_syn_out, syn_out_i->origin());
+                    else if (n_hidden == 48 && n_syn_out == 3 && n_syn_in == 6)
+                        custom_conv_ks1_in6_hidden48_out3_avx2(1, synw_fused, m_synb[syn_wb_idx].data, m_synw[syn_wb_idx+1].data, m_synb[syn_wb_idx+1].data, m_gop_header.img_h, m_gop_header.img_w, syn_in_i->stride, syn_in_i->plane_stride, n_syn_in, n_hidden, syn_in_i->origin(), n_syn_out, syn_out_i->origin());
+                    else if (n_hidden == 16 && n_syn_out == 3 && n_syn_in == 6)
+                        custom_conv_ks1_in6_hidden16_out3_avx2(1, synw_fused, m_synb[syn_wb_idx].data, m_synw[syn_wb_idx+1].data, m_synb[syn_wb_idx+1].data, m_gop_header.img_h, m_gop_header.img_w, syn_in_i->stride, syn_in_i->plane_stride, n_syn_in, n_hidden, syn_in_i->origin(), n_syn_out, syn_out_i->origin());
+                    else if (n_hidden == 8 && n_syn_out == 3 && n_syn_in == 6)
+                        custom_conv_ks1_in6_hidden8_out3_avx2(1, synw_fused, m_synb[syn_wb_idx].data, m_synw[syn_wb_idx+1].data, m_synb[syn_wb_idx+1].data, m_gop_header.img_h, m_gop_header.img_w, syn_in_i->stride, syn_in_i->plane_stride, n_syn_in, n_hidden, syn_in_i->origin(), n_syn_out, syn_out_i->origin());
                     else if (n_hidden == 40)
                     {
                         if (n_syn_out == 3)
@@ -1171,7 +1287,7 @@ frame_memory<SYN_INT_FLOAT> *cc_frame_decoder::run_syn_branch(struct cc_bs_frame
     return syn_in_i;
 }
 
-frame_memory<SYN_INT_FLOAT> *cc_frame_decoder::run_syn(struct cc_bs_frame_coolchic &frame_symbols)
+frame_memory<SYN_INT_FLOAT> *cc_frame_decoder::run_syn(struct cc_bs_frame_coolchic &frame_symbols, enum DEC_LVL destination)
 {
     // multiple synthesiser runs.
     // we have m_syn_1 containing upsampled output, ready to send to synthesisers.
@@ -1220,7 +1336,7 @@ frame_memory<SYN_INT_FLOAT> *cc_frame_decoder::run_syn(struct cc_bs_frame_coolch
     {
         if (b == 0 && m_syn_n_branches > 1)
         {
-            result = run_syn_branch(frame_symbols, b, p_syn_1, p_syn_2, p_syn_tmp);
+            result = run_syn_branch(frame_symbols, b, p_syn_1, p_syn_2, p_syn_tmp, destination);
             // result is either m_syn_2 or m_syn_tmp.
             if (result != p_syn_2)
             {
@@ -1231,7 +1347,7 @@ frame_memory<SYN_INT_FLOAT> *cc_frame_decoder::run_syn(struct cc_bs_frame_coolch
         }
         else if (b < m_syn_n_branches-1)
         {
-            result = run_syn_branch(frame_symbols, b, p_syn_1, p_syn_3, p_syn_tmp);
+            result = run_syn_branch(frame_symbols, b, p_syn_1, p_syn_3, p_syn_tmp, destination);
             // result is either m_syn_3 or m_syn_tmp.
             if (result != p_syn_3)
             {
@@ -1247,7 +1363,7 @@ frame_memory<SYN_INT_FLOAT> *cc_frame_decoder::run_syn(struct cc_bs_frame_coolch
         else
         {
             // NULL for out implies we can run in-place as much as we like, destroying p_syn_1.
-            result = run_syn_branch(frame_symbols, b, p_syn_1, NULL, p_syn_tmp);
+            result = run_syn_branch(frame_symbols, b, p_syn_1, NULL, p_syn_tmp, destination);
             // result is either m_syn_1 or m_syn_tmp.
             if (result != p_syn_1)
             {
@@ -1288,11 +1404,17 @@ frame_memory<SYN_INT_FLOAT> *cc_frame_decoder::run_syn(struct cc_bs_frame_coolch
 }
 
 // returned value should be transformed or otherwise copied before calling decode_frame again.
-struct frame_memory<SYN_INT_FLOAT> *cc_frame_decoder::decode_frame(struct cc_bs_frame_coolchic &frame_symbols)
+struct frame_memory<SYN_INT_FLOAT> *cc_frame_decoder::decode_frame(struct cc_bs_frame_coolchic &frame_symbols, bool decode_lowres)
 {
-    read_arm(frame_symbols);
-    read_ups(frame_symbols);
-    read_syn(frame_symbols);
+    read_arm(frame_symbols, LOWRES);
+    if (frame_symbols.upshigh_lqi.n_bytes_nn_weight > 0 && !decode_lowres)
+        read_ups(frame_symbols, HIGHRES);
+    else
+        read_ups(frame_symbols, LOWRES);
+    if (frame_symbols.synhigh_lqi.n_bytes_nn_weight > 0 && !decode_lowres)
+        read_syn(frame_symbols, HIGHRES, 7);
+    else
+        read_syn(frame_symbols, LOWRES, (frame_symbols.synhigh_lqi.n_bytes_nn_weight > 0) ? 6 : 7);
 
     if (m_verbosity >= 3)
     {
@@ -1300,11 +1422,20 @@ struct frame_memory<SYN_INT_FLOAT> *cc_frame_decoder::decode_frame(struct cc_bs_
         fflush(stdout);
     }
 
-    check_allocations(frame_symbols);
+    check_allocations(frame_symbols, decode_lowres);
 
-    run_arm(frame_symbols);
-    run_ups(frame_symbols);
-    frame_memory<SYN_INT_FLOAT> *syn_result = run_syn(frame_symbols);
+    run_arm(frame_symbols, LOWRES, (!decode_lowres)? HIGHRES : LOWRES);
+    if (!decode_lowres)
+    {
+        if (frame_symbols.armhigh_lqi.n_bytes_nn_weight > 0)
+            read_arm(frame_symbols, HIGHRES);
+        run_arm(frame_symbols, HIGHRES, HIGHRES);
+    }
+        
+
+    run_ups(frame_symbols, (!decode_lowres)? HIGHRES : LOWRES);
+
+    frame_memory<SYN_INT_FLOAT> *syn_result = run_syn(frame_symbols, (!decode_lowres)? HIGHRES : LOWRES);
 
     return syn_result;
 }

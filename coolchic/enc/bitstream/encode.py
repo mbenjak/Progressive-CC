@@ -211,8 +211,11 @@ def encode_frame(
 
     # upsampling has bias parameters, but we do not use them.
     have_bias = { "arm": True,
+                  "arm_highres": True,
                   "upsampling": False,
+                  "upsampling_highres": False,
                   "synthesis": True,
+                  "synthesis_highres": True,
                 }
 
     subprocess.call(f'rm -f {bitstream_path}', shell=True)
@@ -231,6 +234,17 @@ def encode_frame(
         )
         cc_enc.arm = arm_int
         cc_enc.arm.set_param_from_float(arm_fp_param)
+
+        if cc_enc.param.seperate_arm:
+            arm_highres_fp_param = cc_enc.arm_highres.get_param()
+            arm_highres_int = ArmInt(
+                cc_enc.param.dim_arm,
+                cc_enc.param.n_hidden_layers_arm,
+                FIXED_POINT_FRACTIONAL_MULT,
+                pure_int=True
+            )
+            cc_enc.arm_highres = arm_highres_int
+            cc_enc.arm_highres.set_param_from_float(arm_highres_fp_param)
 
     # ================= Encode the MLP into a bitstream file ================ #
     # ac_max_val_nn = get_ac_max_val_nn(frame_encoder)
@@ -255,8 +269,8 @@ def encode_frame(
             q_step_index_nn[index_name]['weight'] = -1
             q_step_index_nn[index_name]['bias'] = -1
             for k, v in module_to_encode.named_parameters():
-                assert cur_module_name in ['arm', 'synthesis', 'upsampling'], f'Unknown module name {cur_module_name}. '\
-                    'Module name should be in ["arm", "synthesis", "upsampling"].'
+                assert cur_module_name in ['arm', 'arm_highres', 'synthesis', 'synthesis_highres', 'upsampling', 'upsampling_highres'], f'Unknown module name {cur_module_name}. '\
+                    'Module name should be in ["arm", "arm_highres", "synthesis", "synthesis_highres", "upsampling", "upsampling_highres"].'
 
                 Q_STEPS = POSSIBLE_Q_STEP.get(cur_module_name)
 
@@ -275,7 +289,7 @@ def encode_frame(
 
                     # Quantize the weight with the actual quantization step and add it
                     # to the list of (quantized) weights
-                    if cur_module_name == "arm":
+                    if cur_module_name.startswith("arm"):
                         # Our weights are stored as fixed point, we use shifts to get the integer values of quantized results.
                         # Our int vals are int(floatval << FPFBITS)
                         q_step_shift = abs(POSSIBLE_Q_STEP_SHIFT["arm"]["weight"][cur_q_step_index])
@@ -313,7 +327,7 @@ def encode_frame(
 
                     # Quantize the bias with the actual quantization step and add it
                     # to the list of (quantized) bias
-                    if cur_module_name == "arm":
+                    if cur_module_name.startswith("arm"):
                         # Our biases are stored as fixed point, we use shifts to get the integer values of quantized results.
                         # Our int vals are int(floatval << FPFBITS << FPFBITS)
                         q_step_shift = abs(POSSIBLE_Q_STEP_SHIFT["arm"]["bias"][cur_q_step_index])
@@ -382,22 +396,31 @@ def encode_frame(
     for cc_name, cc_enc in frame_encoder.coolchic_enc.items():
         for cur_module_name in cc_enc.modules_to_send:
             index_name = f'{cc_name}_{cur_module_name}'
-            assert cur_module_name in ['arm', 'synthesis', 'upsampling'], f'Unknown module name {cur_module_name}. '\
-                'Module name should be in ["arm", "synthesis", "upsampling"].'
+            assert cur_module_name in ['arm', 'arm_highres', 'synthesis', 'synthesis_highres', 'upsampling', 'upsampling_highres'], f'Unknown module name {cur_module_name}. '\
+                'Module name should be in ["arm", "arm_highres", "synthesis", "synthesis_highres", "upsampling", "upsampling_highres"].'
 
-            if cur_module_name == 'arm':
+            if cur_module_name.startswith('arm'):
                 empty_module = ArmInt(
                     cc_enc.param.dim_arm,
                     cc_enc.param.n_hidden_layers_arm,
                     FIXED_POINT_FRACTIONAL_MULT,
                     pure_int = True
                 )
-            elif cur_module_name == 'synthesis':
+            elif cur_module_name.startswith('synthesis'):
                 empty_module =  Synthesis(
                     sum(cc_enc.param.n_ft_per_res),
                     cc_enc.param.layers_synthesis
                 )
             elif cur_module_name == 'upsampling':
+                empty_module = Upsampling(
+                        cc_enc.param.ups_k_size,
+                        cc_enc.param.ups_preconcat_k_size,
+                        # frame_encoder.coolchic_encoder.param.n_ups_kernel,
+                        cc_enc.param.latent_n_grids - 1,
+                        # frame_encoder.coolchic_encoder.param.n_ups_preconcat_kernel,
+                        cc_enc.param.latent_n_grids - 1,
+                    )
+            elif cur_module_name == 'upsampling_highres':
                 empty_module = Upsampling(
                         cc_enc.param.ups_k_size,
                         cc_enc.param.ups_preconcat_k_size,
@@ -469,8 +492,10 @@ def encode_frame(
             cur_stream_sizes = []
             cur_stream_names = []
             ctr_2d_ft = 0
+
+            ctr_2d_ft = 0
             # Loop on the different resolutions
-            for index_lat_resolution in range(cc_enc.param.latent_n_grids):
+            for index_lat_resolution in reversed(range(cc_enc.param.latent_n_grids)):
                 current_mu = encoder_output.additional_data.get(f'{cc_name}detailed_mu')[index_lat_resolution]
                 current_scale = encoder_output.additional_data.get(f'{cc_name}detailed_scale')[index_lat_resolution]
                 current_log_scale = encoder_output.additional_data.get(f'{cc_name}detailed_log_scale')[index_lat_resolution]
@@ -492,6 +517,7 @@ def encode_frame(
 
                 # Loop on the different 2D grids composing one resolutions
                 for index_lat_feature in range(c_i):
+                    # No progressive coding. Encode regular latents
                     y_this_ft = current_y[:, index_lat_feature, :, :].flatten().cpu()
                     mu_this_ft = current_mu[:, index_lat_feature, :, :].flatten().cpu()
                     log_scale_this_ft = current_log_scale[:, index_lat_feature, :, :].flatten().cpu()
@@ -524,6 +550,7 @@ def encode_frame(
                     cur_stream_size += os.path.getsize(cur_latent_bitstream)
                     # n_bytes_per_latent[cc_name].append(os.path.getsize(cur_latent_bitstream))
                     ctr_2d_ft += 1
+
 
             if best_stream_size is None \
                 or cur_stream_size < best_stream_size:
@@ -572,6 +599,20 @@ def encode_frame(
         hls_blk_sizes,
     )
 
+    bitstream_sizes = {
+        "gop_header": os.path.getsize(gop_header_path) if display_index == 0 else 0,
+        "header": os.path.getsize(header_path),
+        "arm": 0,
+        "arm_highres": 0,
+        "upsampling": 0,
+        "upsampling_highres": 0,
+        "synthesis_highres": 0,
+        "synthesis": 0,
+        "synthesis_highres": 0,
+        "lowres_latents": 0,
+        "highres_latents": 0,
+    }
+
     # Concatenate everything inside a single file
     subprocess.call(f'rm -f {bitstream_path}', shell=True)
     if display_index == 0:
@@ -588,15 +629,23 @@ def encode_frame(
             for parameter_type in ['weight', 'bias']:
                 cur_bitstream = f'{bitstream_path}_{cc_name}_{cur_module_name}_{parameter_type}'
                 if os.path.exists(cur_bitstream):
-                    if latents_zero and cur_module_name == "upsampling":
+                    if latents_zero and cur_module_name.startswith("upsampling"):
                         pass
                     else:
                         subprocess.call(f'cat {cur_bitstream} >> {bitstream_path}', shell=True)
+                        bitstream_sizes[cur_module_name] += os.path.getsize(cur_bitstream)
                     subprocess.call(f'rm -f {cur_bitstream}', shell=True)
-
+   
         ctr_2d_ft = 0
-        for index_lat_resolution in range(cc_enc.param.latent_n_grids):
-
+        for index_lat_resolution in reversed(range(cc_enc.param.latent_n_grids)):
+            if index_lat_resolution == 0:
+                for cur_module_name in ['arm_highres', 'upsampling_highres', 'synthesis_highres']:
+                    for parameter_type in ['weight', 'bias']:
+                        cur_bitstream = f'{bitstream_path}_{cc_name}_{cur_module_name}_{parameter_type}'
+                        if os.path.exists(cur_bitstream):
+                            subprocess.call(f'cat {cur_bitstream} >> {bitstream_path}', shell=True)
+                            bitstream_sizes[cur_module_name] += os.path.getsize(cur_bitstream)
+                            subprocess.call(f'rm -f {cur_bitstream}', shell=True)
             # No feature: still increment the counter and remove the temporary bitstream file
             if cc_enc.latent_grids[index_lat_resolution].size()[1] == 0:
                 cur_latent_bitstream = get_sub_bitstream_path(f'{bitstream_path}_{cc_name}', ctr_2d_ft)
@@ -609,11 +658,17 @@ def encode_frame(
                     pass
                 else:
                     subprocess.call(f'cat {cur_latent_bitstream} >> {bitstream_path}', shell=True)
+                    if index_lat_resolution > 0:
+                        bitstream_sizes["lowres_latents"] += os.path.getsize(cur_latent_bitstream)
+                    else:
+                        bitstream_sizes["highres_latents"] += os.path.getsize(cur_latent_bitstream)
                 subprocess.call(f'rm -f {cur_latent_bitstream}', shell=True)
                 ctr_2d_ft += 1
 
+
     # Encoding's done, we no longer need deterministic algorithms
     torch.use_deterministic_algorithms(False)
+    print(f'Bitstream sizes (bytes): {" ".join([f"{k}: {v}" for k, v in bitstream_sizes.items()])} total: {os.path.getsize(bitstream_path)}')
 
 
 def get_sub_bitstream_path(

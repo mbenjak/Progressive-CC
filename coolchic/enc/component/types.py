@@ -24,8 +24,11 @@ class DescriptorCoolChic:
     """Contains information about the different sub-networks of Cool-chic."""
 
     arm: Optional[DescriptorNN] = None
+    arm_highres: Optional[DescriptorNN] = None
     upsampling: Optional[DescriptorNN] = None
+    upsampling_highres: Optional[DescriptorNN] = None
     synthesis: Optional[DescriptorNN] = None
+    synthesis_highres: Optional[DescriptorNN] = None
 
 
 # For now, it is only possible to have a Cool-chic encoder

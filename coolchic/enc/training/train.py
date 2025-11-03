@@ -274,13 +274,20 @@ def train(
         )
 
         decoded_image = out_forward.decoded_image
+        decoded_low_res_image = out_forward.decoded_low_res_image
         target_image = frame.data.data
+        target_image_lowres = frame.data.data_downscaled
 
         loss_function_output = loss_function(
             decoded_image=decoded_image,
+            decoded_low_res_image=decoded_low_res_image,
             rate_latent_bit=out_forward.rate,
             target_image=target_image,
+            target_image_lowres=target_image_lowres,
             lmbda=lmbda,
+            encode_low_res=frame_encoder_manager.encode_low_res,
+            low_res_weight=frame_encoder_manager.low_res_weight,
+            low_res_mode=frame_encoder_manager.low_res_mode,
             total_rate_nn_bit=0.0,
             compute_logs=False,
         )

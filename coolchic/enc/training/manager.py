@@ -25,6 +25,10 @@ class FrameEncoderManager():
     n_loops: int = 1                                    # Number of training loop
     n_itr_pretrain_motion: int = int(1e3)               # Number of iterations for the motion pre-training stage
 
+    encode_low_res: bool = True                         # Encode the low resolution image
+    low_res_weight: float = 0.1                         # Weight of the low resolution image in the loss
+    low_res_mode: str = 'downsampled'                   # Mode of the low resolution image mse calculation: 'downsampled' or 'upsampled'
+
     # ==================== Not set by the init function ===================== #
     # ----- Actual preset, instantiated from its name
     preset: Preset = field(init=False)                  # It contains the learning rate in the different phase

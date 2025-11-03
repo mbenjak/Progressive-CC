@@ -48,6 +48,8 @@ class FrameEncoderOutput:
     # Note: yuv444 data are represented as a simple [B, 3, H, W] tensor
     decoded_image: Union[Tensor, DictTensorYUV]
 
+    decoded_low_res_image: Union[Tensor, DictTensorYUV]
+
     # Rate associated to each cool-chic encoder
     rate: Dict[NAME_COOLCHIC_ENC, Tensor]
 
@@ -210,6 +212,7 @@ class FrameEncoder(nn.Module):
 
         if self.frame_type == "I":
             decoded_image = cc_enc_out["residue"].get("raw_out")
+            decoded_low_res_image = cc_enc_out["residue"].get("low_res_raw_out")
 
         elif self.frame_type in ["P", "B"]:
             residue = cc_enc_out["residue"].get("raw_out")[:, :3, :, :]
@@ -246,8 +249,11 @@ class FrameEncoder(nn.Module):
         if self.frame_data_type == "yuv420":
             decoded_image = convert_444_to_420(decoded_image)
             decoded_image = yuv_dict_clamp(decoded_image, min_val=0.0, max_val=1.0)
+            decoded_low_res_image = convert_444_to_420(decoded_low_res_image)
+            decoded_low_res_image = yuv_dict_clamp(decoded_low_res_image, min_val=0.0, max_val=1.0)
         elif self.frame_data_type != "flow":
             decoded_image = torch.clamp(decoded_image, 0.0, 1.0)
+            decoded_low_res_image = torch.clamp(decoded_low_res_image, 0.0, 1.0)
 
         additional_data = {}
         if flag_additional_outputs:
@@ -274,6 +280,7 @@ class FrameEncoder(nn.Module):
 
         results = FrameEncoderOutput(
             decoded_image=decoded_image,
+            decoded_low_res_image=decoded_low_res_image,
             rate=rate,
             additional_data=additional_data,
         )

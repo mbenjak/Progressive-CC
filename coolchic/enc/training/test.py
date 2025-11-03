@@ -153,7 +153,7 @@ class FrameEncoderLogs(LossFunctionOutput):
                 # Loop on weight and biases
                 for weight_or_bias in [x.name for x in fields(DescriptorNN)]:
                     # Convert the value to bpp if we have one
-                    if cc_name in self.detailed_rate_nn:
+                    if cc_name in self.detailed_rate_nn and nn_name in self.detailed_rate_nn[cc_name]:
                         self.detailed_rate_nn_bpp[cc_name][nn_name][weight_or_bias] = (
                             self.detailed_rate_nn[cc_name][nn_name][weight_or_bias]
                             / self.n_pixels
@@ -361,6 +361,7 @@ class FrameEncoderLogs(LossFunctionOutput):
             # ----- This is printed in every modes
             "loss": ["short", "all"],
             "psnr_db": ["short", "all"],
+            "psnr_lr_db": ["short", "all"],
             "total_rate_bpp": ["short", "all"],
             "total_rate_latent_bpp": ["short", "all"],
             "total_rate_nn_bpp": ["short", "all"],
@@ -503,9 +504,14 @@ def test(
 
     loss_fn_output = loss_function(
         frame_encoder_out.decoded_image,
+        frame_encoder_out.decoded_low_res_image,
         frame_encoder_out.rate,
         frame.data.data,
+        frame.data.data_downscaled,
         lmbda=frame_encoder_manager.lmbda,
+        encode_low_res=frame_encoder_manager.encode_low_res,
+        low_res_weight=frame_encoder_manager.low_res_weight,
+        low_res_mode=frame_encoder_manager.low_res_mode,
         total_rate_nn_bit=total_rate_nn_bit,
         compute_logs=True,
     )

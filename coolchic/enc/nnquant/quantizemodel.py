@@ -212,9 +212,14 @@ def quantize_model(
 
                 loss_fn_output = loss_function(
                     frame_encoder_out.decoded_image,
+                    frame_encoder_out.decoded_low_res_image,
                     frame_encoder_out.rate,
                     frame.data.data,
+                    frame.data.data_downscaled,
                     lmbda=frame_encoder_manager.lmbda,
+                    encode_low_res=frame_encoder_manager.encode_low_res,
+                    low_res_weight=frame_encoder_manager.low_res_weight,
+                    low_res_mode=frame_encoder_manager.low_res_mode,
                     total_rate_nn_bit=total_rate_nn_bit,
                     compute_logs=True,
                 )

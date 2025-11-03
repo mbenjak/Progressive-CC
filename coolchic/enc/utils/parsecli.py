@@ -91,6 +91,9 @@ def get_coolchic_param_from_args(
         "ups_preconcat_k_size": getattr(
             args, f"ups_preconcat_k_size_{coolchic_enc_name}"
         ),
+        "seperate_synthesis": getattr(args, f"seperate_synthesis"),
+        "seperate_upsampling": getattr(args, f"seperate_upsampling"),
+        "seperate_arm": getattr(args, f"seperate_arm"),
     }
 
     # Add ARM parameters
@@ -230,5 +233,7 @@ def get_manager_from_args(args: argparse.Namespace) -> Dict[str, Any]:
         "n_loops": args.n_train_loops,
         "n_itr": args.n_itr,
         "n_itr_pretrain_motion": args.n_itr_pretrain_motion,
+        "low_res_weight": args.low_res_weight,
+        "low_res_mode": args.low_res_mode,
     }
     return frame_encoder_manager

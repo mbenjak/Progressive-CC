@@ -433,6 +433,25 @@ def encode_one_frame(
                     dec_path + ".yuv",
                     norm=True,
                 )
+
+            # save low-res image
+            if frame_encoder_manager.encode_low_res:
+                low_res_dec_path = f"{prefix_save}decodedlr-{frame.seq_name}"
+                _low_res_dec_img = frame_encoder_output.decoded_low_res_image
+                if frame.data.frame_data_type == "rgb":
+                    if frame.data.bitdepth == 8:
+                        write_png(_low_res_dec_img, low_res_dec_path + ".png")
+                    else:
+                        write_ppm(_low_res_dec_img, low_res_dec_path + ".ppm", norm=True)
+                # YUV
+                else:
+                    write_yuv(
+                        _low_res_dec_img,
+                        frame.data.bitdepth,
+                        frame.data.frame_data_type,
+                        low_res_dec_path + ".yuv",
+                        norm=True,
+                    )
         # We have not beaten our record... But we still want to save the
         # updated frame_encoder_manager indicating that we've done one
         # additional loop
@@ -650,5 +669,7 @@ def frame_data_to_device(frame_data: FrameData, device: POSSIBLE_DEVICE) -> Fram
         frame_data.data = yuv_dict_to_device(frame_data.data, device)
     else:
         frame_data.data = frame_data.data.to(device)
+
+    frame_data.data_downscaled = frame_data.data_downscaled.to(device)
 
     return frame_data

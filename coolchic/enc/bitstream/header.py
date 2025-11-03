@@ -140,7 +140,6 @@ def write_gop_header(header_path: str, image_height: int, image_width: int, fram
 
     byte_to_write += ((_FRAME_DATA_TYPE.index(frame_data_type)<<4) | send_output_bitdepth) \
                         .to_bytes(1, byteorder="big", signed=False)
-
     with open(header_path, "wb") as fout:
         fout.write(byte_to_write)
 
@@ -149,113 +148,6 @@ def write_gop_header(header_path: str, image_height: int, image_width: int, fram
         print("expected", n_bytes_header)
         print("got", os.path.getsize(header_path))
         exit(1)
-
-#def write_gop_header(video_encoder: VideoEncoder, header_path: str):
-#    """Write a frame header to a a file located at <header_path>.
-#    The structure of the header is described above.
-#
-#    Args:
-#        video_encoder (VideoEncoder): Model from which info located in the header will be retrieved.
-#        header_path (str): Path of the file where the header is written.
-#    """
-#
-#    n_bytes_header = 0
-#    n_bytes_header += 2  # Number of bytes header
-#    n_bytes_header += 2  # Image height
-#    n_bytes_header += 2  # Image width
-#    n_bytes_header += 1  # GOP type, frame data type, bitdepth
-#    n_bytes_header += 1  # intra period
-#    n_bytes_header += 1  # p period
-#
-#    byte_to_write = b""
-#    byte_to_write += n_bytes_header.to_bytes(2, byteorder="big", signed=False)
-#
-#    # Get these to access to the img_size in frame_encoder.coolchic_encoder_param
-#    intra_frame_encoder, _ = video_encoder.all_frame_encoders["0"]
-#
-#    byte_to_write += intra_frame_encoder.coolchic_encoder_param.img_size[-2].to_bytes(
-#        2, byteorder="big", signed=False
-#    )
-#    byte_to_write += intra_frame_encoder.coolchic_encoder_param.img_size[-1].to_bytes(
-#        2, byteorder="big", signed=False
-#    )
-#
-#    byte_to_write += (
-#        # Last 4 bits are for the bitdepth
-#        _POSSIBLE_BITDEPTH.index(intra_frame_encoder.bitdepth) * 2**4
-#        # The first 4 bits are for the frame data type
-#        + _FRAME_DATA_TYPE.index(intra_frame_encoder.frame_data_type)
-#    ).to_bytes(1, byteorder="big", signed=False)
-#
-#    byte_to_write += video_encoder.coding_structure.intra_period.to_bytes(
-#        1, byteorder="big", signed=False
-#    )
-#    byte_to_write += video_encoder.coding_structure.p_period.to_bytes(
-#        1, byteorder="big", signed=False
-#    )
-#
-#    with open(header_path, "wb") as fout:
-#        fout.write(byte_to_write)
-#
-#    if n_bytes_header != os.path.getsize(header_path):
-#        print("Invalid number of bytes in header!")
-#        print("expected", n_bytes_header)
-#        print("got", os.path.getsize(header_path))
-#        exit(1)
-#
-
-#def read_gop_header(bitstream_path: str) -> GopHeader:
-#    """Read the first few bytes of a bitstream file located at
-#    <bitstream_path> and parse the different information.
-#
-#    Args:
-#        bitstream_path (str): Path where the bitstream is located.
-#
-#    Returns:
-#        GopHeader: The parsed info from the bitstream.
-#    """
-#    with open(bitstream_path, "rb") as fin:
-#        bitstream = fin.read()
-#
-#    ptr = 0
-#    n_bytes_header = int.from_bytes(
-#        bitstream[ptr : ptr + 2], byteorder="big", signed=False
-#    )
-#    ptr += 2
-#
-#    img_height = int.from_bytes(bitstream[ptr : ptr + 2], byteorder="big", signed=False)
-#    ptr += 2
-#    img_width = int.from_bytes(bitstream[ptr : ptr + 2], byteorder="big", signed=False)
-#    ptr += 2
-#
-#    raw_value = int.from_bytes(bitstream[ptr : ptr + 1], byteorder="big", signed=False)
-#    ptr += 1
-#    bitdepth = _POSSIBLE_BITDEPTH[raw_value // 2**4]
-#    frame_data_type = _FRAME_DATA_TYPE[(raw_value % 2**4)]
-#
-#    intra_period = int.from_bytes(
-#        bitstream[ptr : ptr + 1], byteorder="big", signed=False
-#    )
-#    ptr += 1
-#    p_period = int.from_bytes(bitstream[ptr : ptr + 1], byteorder="big", signed=False)
-#    ptr += 1
-#
-#    header_info: GopHeader = {
-#        "n_bytes_header": n_bytes_header,
-#        "img_size": (img_height, img_width),
-#        "frame_data_type": frame_data_type,
-#        "bitdepth": bitdepth,
-#        "intra_period": intra_period,
-#        "p_period": p_period,
-#    }
-#
-#    print("\nContent of the GOP header:")
-#    print("---------------------------")
-#    for k, v in header_info.items():
-#        print(f"{k:>20}: {v}")
-#    print("         ---------------------")
-#
-#    return header_info
 
 
 class FrameHeader(TypedDict):
@@ -532,11 +424,17 @@ def write_frame_header(
 
         latents_zero = cc_latents_zero(cc_enc, n_bytes_per_latent[cc_name])
         if latents_zero: # no upsampling if latents are all zero.
-            modules = ["arm", "synthesis"]
+            modules = ["arm", "synthesis", "arm_highres", "upsampling_highres", "synthesis_highres"]
         else:
-            modules = ["arm", "upsampling", "synthesis"]
-
+            modules = ["arm", "upsampling", "synthesis", "arm_highres", "upsampling_highres", "synthesis_highres"]
+        
         for nn_name in modules:
+            if not nn_name in cc_enc.modules_to_send:
+                tmp = 255
+                byte_to_write += tmp.to_bytes(
+                    1, byteorder="big", signed=False
+                )
+                continue
             index_name = f'{cc_name}_{nn_name}'
             for nn_param in ["weight", "bias"]:
                 cur_q_step_index = q_step_index_nn.get(index_name).get(nn_param)
@@ -545,12 +443,16 @@ def write_frame_header(
                 )
 
         for nn_name in modules:
+            if not nn_name in cc_enc.modules_to_send:
+                continue
             index_name = f'{cc_name}_{nn_name}'
             for nn_param in ["weight", "bias"]:
                 cur_scale_index = scale_index_nn.get(index_name).get(nn_param)
                 byte_to_write += cur_scale_index.to_bytes(1, byteorder="big", signed=False)
 
         for nn_name in modules:
+            if not nn_name in cc_enc.modules_to_send:
+                continue
             index_name = f'{cc_name}_{nn_name}'
             for nn_param in ["weight", "bias"]:
                 cur_n_bytes = n_bytes_nn.get(index_name).get(nn_param)

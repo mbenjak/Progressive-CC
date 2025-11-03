@@ -34,6 +34,12 @@ template <typename P>
 void custom_conv_ksX_inX_outX_avx2(int KS, P *kw, P *kb, int h_in, int w_in, int stride_in, int plane_stride_in, int residue_origin_offset, int N_IN, P *in, int N_OUT, P *out, int residue, int relu);
 
 template <typename P>
+void custom_conv_ks1_in6_hidden48_out3_avx2(int KS, P *kw7_40, P *kb40, P *kw40_3, P *kb3, int h_in, int w_in, int pad_in, int plane_stride_in, int N_IN, int N_HIDDEN, P *in, int N_OUT, P *out);
+template <typename P>
+void custom_conv_ks1_in6_hidden16_out3_avx2(int KS, P *kw7_40, P *kb40, P *kw40_3, P *kb3, int h_in, int w_in, int pad_in, int plane_stride_in, int N_IN, int N_HIDDEN, P *in, int N_OUT, P *out);
+template <typename P>
+void custom_conv_ks1_in6_hidden8_out3_avx2(int KS, P *kw7_40, P *kb40, P *kw40_3, P *kb3, int h_in, int w_in, int pad_in, int plane_stride_in, int N_IN, int N_HIDDEN, P *in, int N_OUT, P *out);
+template <typename P>
 void custom_conv_ks1_in7_hidden48_out3_avx2(int KS, P *kw7_40, P *kb40, P *kw40_3, P *kb3, int h_in, int w_in, int pad_in, int plane_stride_in, int N_IN, int N_HIDDEN, P *in, int N_OUT, P *out);
 template <typename P>
 void custom_conv_ks1_in7_hidden40_out3_avx2(int KS, P *kw7_40, P *kb40, P *kw40_3, P *kb3, int h_in, int w_in, int pad_in, int plane_stride_in, int N_IN, int N_HIDDEN, P *in, int N_OUT, P *out);

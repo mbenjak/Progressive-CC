@@ -22,7 +22,8 @@ int cc_decode_avx2(
     std::string &out_ppm_filename,
     int output_bitdepth = 0,
     int output_chroma_format = 0,
-    int verbosity = 0);
+    int verbosity = 0,
+    bool decode_lowres = true);
 
 PYBIND11_MODULE(ccdecapi_avx2, m) {
     m.doc() = "ccdecoding"; // optional module docstring

@@ -454,4 +454,3 @@ std::vector<int> cc_decode_wb::decode_wb_continue(int n_weights, int count)
     }
     return result;
 }
-

@@ -74,7 +74,13 @@ class SynthesisConv2d(nn.Module):
             Output tensor of shape :math:`[B, C_{out}, H, W]`.
         """
         padded_x = F.pad(x, (self.pad, self.pad, self.pad, self.pad), mode="replicate")
-        y = F.conv2d(padded_x, self.weight, self.bias, groups=self.groups)
+
+        n_input_channels = x.shape[1]
+        n_expected_input_channels = self.weight.shape[1]
+        if n_input_channels < n_expected_input_channels:
+            y = F.conv2d(padded_x, self.weight[:,n_expected_input_channels-n_input_channels:,:,:], self.bias, groups=self.groups)
+        else:
+            y = F.conv2d(padded_x, self.weight, self.bias, groups=self.groups)
 
         if self.residual:
             return y + x

@@ -9,6 +9,7 @@
 
 import os
 import sys
+import time
 
 import configargparse
 from enc.component.coolchic import CoolChicEncoderParameter
@@ -27,6 +28,7 @@ from enc.utils.parsecli import (
 import torch
 
 if __name__ == "__main__":
+    start_time = time.time()
     # =========================== Parse arguments =========================== #
     # By increasing priority order, the arguments work as follows:
     #
@@ -248,6 +250,21 @@ if __name__ == "__main__":
     )
 
     parser.add(
+        "--low_res_weight",
+        type=float,
+        default=0.4,
+        help="Weighting factor between low-res and high-res representation. 0.0 is full weight on high-res, 1.0 is full weight on low-res.",
+    )
+
+    parser.add(
+        "--low_res_mode",
+        type=str,
+        default="downsampled",
+        choices=["downsampled", "upsampled"],
+        help="Mode of the low-resolution image mse calculation: 'downsampled' or 'upsampled'",
+    )
+
+    parser.add(
         "--n_ft_per_res",
         type=str,
         default="1,1,1,1,1,1,1",
@@ -255,6 +272,24 @@ if __name__ == "__main__":
         " --n_ft_per_res_residue=1,1,1,1,1,1,1 "
         " for 7 latent grids with variable resolutions. "
         " Parameterize the residue decoder.",
+    )
+
+    parser.add_argument(
+        "--seperate_synthesis",
+        action="store_true",
+        help="Seperate synthesis for highres and lowres",
+    )
+
+    parser.add_argument(
+        "--seperate_upsampling",
+        action="store_true",
+        help="Seperate upsampling for highres and lowres",
+    )
+
+    parser.add_argument(
+        "--seperate_arm",
+        action="store_true",
+        help="Seperate arm for highres and lowres",
     )
 
     args = parser.parse_args()
@@ -368,4 +403,5 @@ if __name__ == "__main__":
             hls_sig_blksize=16
         )
 
+    print(f"\nEncoding time: {time.time() - start_time:.2f} seconds")
     sys.exit(exit_code.value)

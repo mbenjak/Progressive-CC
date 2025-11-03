@@ -18,11 +18,23 @@ POSSIBLE_EXP_GOL_COUNT = {
         "weight": torch.linspace(0, 12, 13, device="cpu"),
         "bias": torch.linspace(0, 12, 13, device="cpu"),
     },
+    "arm_highres": {
+        "weight": torch.linspace(0, 12, 13, device="cpu"),
+        "bias": torch.linspace(0, 12, 13, device="cpu"),
+    },
     "upsampling": {
         "weight": torch.linspace(0, 12, 13, device="cpu"),
         "bias": torch.linspace(0, 12, 13, device="cpu"),
     },
+    "upsampling_highres": {
+        "weight": torch.linspace(0, 12, 13, device="cpu"),
+        "bias": torch.linspace(0, 12, 13, device="cpu"),
+    },
     "synthesis": {
+        "weight": torch.linspace(0, 12, 13, device="cpu"),
+        "bias": torch.linspace(0, 12, 13, device="cpu"),
+    },
+    "synthesis_highres": {
         "weight": torch.linspace(0, 12, 13, device="cpu"),
         "bias": torch.linspace(0, 12, 13, device="cpu"),
     },

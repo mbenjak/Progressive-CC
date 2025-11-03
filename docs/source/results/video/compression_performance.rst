@@ -1,4 +1,0 @@
-Video results
-=============
-
-Coming soon!
