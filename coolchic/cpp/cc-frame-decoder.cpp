@@ -1422,7 +1422,7 @@ struct frame_memory<SYN_INT_FLOAT> *cc_frame_decoder::decode_frame(struct cc_bs_
         fflush(stdout);
     }
 
-    check_allocations(frame_symbols, decode_lowres);
+    check_allocations(frame_symbols, !decode_lowres);
 
     run_arm(frame_symbols, LOWRES, (!decode_lowres)? HIGHRES : LOWRES);
     if (!decode_lowres)
